@@ -108,6 +108,15 @@ const WaypointStore = {
   async listWaypoints() {
     return db.waypoints.orderBy("createdAt").reverse().toArray();
   },
+  async getWaypoint(id) {
+    return db.waypoints.get(id);
+  },
+  async updateWaypoint(id, { name, note, category }) {
+    return db.waypoints.update(id, { name, note, category });
+  },
+  async moveWaypoint(id, lat, lng) {
+    return db.waypoints.update(id, { lat, lng });
+  },
   async deleteWaypoint(id) {
     return db.waypoints.delete(id);
   },

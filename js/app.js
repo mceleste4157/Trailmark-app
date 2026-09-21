@@ -565,6 +565,101 @@ function categoryOptionsHtml(selected) {
   ).join("");
 }
 
+function buildWaypointPopupContent(wp) {
+  const container = document.createElement("div");
+  container.style.maxWidth = "220px";
+
+  const title = document.createElement("div");
+  title.innerHTML = `<strong>${escHtml(wp.name)}</strong> <span style="color:#6b7280;font-size:12px;">(${CATEGORY_LABELS[wp.category] || "Other"})</span>`;
+  container.appendChild(title);
+
+  if (wp.note) {
+    const note = document.createElement("div");
+    note.style.cssText = "font-size:12px;margin-top:4px;color:#374151;";
+    note.textContent = wp.note;
+    container.appendChild(note);
+  }
+
+  const actions = document.createElement("div");
+  actions.style.cssText = "display:flex;gap:6px;margin-top:8px;";
+
+  const editBtn = document.createElement("button");
+  editBtn.textContent = "Edit";
+  editBtn.style.cssText = "flex:1;padding:6px;background:#166534;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;";
+  editBtn.addEventListener("click", () => openEditWaypointPanel(wp));
+  actions.appendChild(editBtn);
+
+  const moveBtn = document.createElement("button");
+  moveBtn.textContent = "Move Here";
+  moveBtn.style.cssText = "flex:1;padding:6px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;";
+  moveBtn.addEventListener("click", () => {
+    if (!("geolocation" in navigator)) {
+      alert("Geolocation isn't available on this device.");
+      return;
+    }
+    moveBtn.textContent = "…";
+    moveBtn.disabled = true;
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        await WaypointStore.moveWaypoint(wp.id, pos.coords.latitude, pos.coords.longitude);
+        await refreshWaypointMarkers();
+      },
+      (err) => {
+        alert("Couldn't get your location: " + err.message);
+        moveBtn.textContent = "Move Here";
+        moveBtn.disabled = false;
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+  actions.appendChild(moveBtn);
+
+  const delBtn = document.createElement("button");
+  delBtn.textContent = "Delete";
+  delBtn.style.cssText = "flex:1;padding:6px;background:#dc2626;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;";
+  delBtn.addEventListener("click", async () => {
+    if (!confirm(`Delete "${wp.name}"?`)) return;
+    await WaypointStore.deleteWaypoint(wp.id);
+    await refreshWaypointMarkers();
+  });
+  actions.appendChild(delBtn);
+
+  container.appendChild(actions);
+  return container;
+}
+
+function openEditWaypointPanel(wp) {
+  openPanel(
+    "Edit Waypoint",
+    `
+    <label>Name</label>
+    <input id="wp-edit-name" value="${escHtml(wp.name)}" />
+    <label>Category</label>
+    <select id="wp-edit-category" style="width:100%;margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);">
+      ${categoryOptionsHtml(wp.category)}
+    </select>
+    <label>Note (optional)</label>
+    <textarea id="wp-edit-note" rows="2">${escHtml(wp.note || "")}</textarea>
+    <button class="primary" id="wp-edit-save">Save Changes</button>
+    <button class="primary" id="wp-edit-delete" style="background:var(--danger);border:none;margin-top:8px;">Delete Waypoint</button>
+    `
+  );
+  document.getElementById("wp-edit-save").addEventListener("click", async () => {
+    const name = document.getElementById("wp-edit-name").value.trim() || "Unnamed waypoint";
+    const category = document.getElementById("wp-edit-category").value;
+    const note = document.getElementById("wp-edit-note").value.trim();
+    await WaypointStore.updateWaypoint(wp.id, { name, note, category });
+    await refreshWaypointMarkers();
+    closePanel();
+  });
+  document.getElementById("wp-edit-delete").addEventListener("click", async () => {
+    if (!confirm(`Delete "${wp.name}"?`)) return;
+    await WaypointStore.deleteWaypoint(wp.id);
+    await refreshWaypointMarkers();
+    closePanel();
+  });
+}
+
 async function refreshWaypointMarkers() {
   activeWaypointMarkers.forEach((m) => m.remove());
   activeWaypointMarkers = [];
@@ -573,11 +668,7 @@ async function refreshWaypointMarkers() {
     const color = CATEGORY_COLORS[wp.category] || CATEGORY_COLORS.other;
     const marker = new maplibregl.Marker({ color })
       .setLngLat([wp.lng, wp.lat])
-      .setPopup(
-        new maplibregl.Popup().setHTML(
-          `<strong>${escHtml(wp.name)}</strong> <span style="color:#6b7280;">(${CATEGORY_LABELS[wp.category] || "Other"})</span><br>${escHtml(wp.note || "")}`
-        )
-      )
+      .setPopup(new maplibregl.Popup().setDOMContent(buildWaypointPopupContent(wp)))
       .addTo(map);
     activeWaypointMarkers.push(marker);
   });
@@ -627,15 +718,22 @@ async function refreshPhotoMarkers() {
   activePhotoMarkers = [];
   const photos = await PhotoStore.listPhotos();
   photos.forEach((photo) => {
-    const el = document.createElement("div");
-    el.textContent = "📷";
-    el.style.cssText = "font-size:20px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.7));cursor:pointer;";
-    const objectUrl = URL.createObjectURL(photo.blob);
-    const marker = new maplibregl.Marker({ element: el })
-      .setLngLat([photo.lng, photo.lat])
-      .setPopup(new maplibregl.Popup().setDOMContent(buildPhotoPopupContent(photo, objectUrl)))
-      .addTo(map);
-    activePhotoMarkers.push(marker);
+    // One bad row (e.g. a corrupted Blob — IndexedDB's Blob support has
+    // known bugs on some mobile browsers) shouldn't take down every
+    // other photo's marker along with it.
+    try {
+      const el = document.createElement("div");
+      el.textContent = "📷";
+      el.style.cssText = "font-size:20px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.7));cursor:pointer;";
+      const objectUrl = URL.createObjectURL(photo.blob);
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([photo.lng, photo.lat])
+        .setPopup(new maplibregl.Popup().setDOMContent(buildPhotoPopupContent(photo, objectUrl)))
+        .addTo(map);
+      activePhotoMarkers.push(marker);
+    } catch (err) {
+      console.warn("Could not render a photo marker:", photo.id, err);
+    }
   });
 }
 
@@ -736,7 +834,7 @@ function openWaypointPanel() {
   openPanel(
     "Drop a Waypoint",
     `
-    <p style="color:var(--text-dim);font-size:13px;">Uses your current map center. Pan the map first, then save.</p>
+    <p style="color:var(--text-dim);font-size:13px;">Uses your current GPS location — get where you want it marked, then save.</p>
     <label>Name</label>
     <input id="wp-name" placeholder="e.g. Creek Crossing" />
     <label>Category</label>
@@ -755,32 +853,43 @@ function openWaypointPanel() {
     <button class="primary" id="wp-save">Save Waypoint Here</button>
     `
   );
-  document.getElementById("wp-save").addEventListener("click", async () => {
+  document.getElementById("wp-save").addEventListener("click", () => {
+    if (!("geolocation" in navigator)) {
+      alert("Geolocation isn't available on this device.");
+      return;
+    }
     const name = document.getElementById("wp-name").value.trim() || "Unnamed waypoint";
     const category = document.getElementById("wp-category").value;
     const note = document.getElementById("wp-note").value.trim();
-    const center = map.getCenter();
-    await WaypointStore.saveWaypoint({ name, lat: center.lat, lng: center.lng, note, category });
-    await refreshWaypointMarkers();
+    const saveBtn = document.getElementById("wp-save");
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Getting location…";
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        await WaypointStore.saveWaypoint({ name, lat, lng, note, category });
+        await refreshWaypointMarkers();
 
-    const shareBox = document.getElementById("wp-share");
-    if (shareBox && shareBox.checked && session) {
-      const photoInput = document.getElementById("wp-photo");
-      const photoFile = photoInput && photoInput.files[0] ? photoInput.files[0] : null;
-      try {
-        await GroupBackend.addWaypoint({
-          name,
-          note,
-          lat: center.lat,
-          lng: center.lng,
-          category,
-          photoFile,
-        });
-      } catch (err) {
-        alert("Saved locally, but could not share it: " + err.message);
-      }
-    }
-    closePanel();
+        const shareBox = document.getElementById("wp-share");
+        if (shareBox && shareBox.checked && session) {
+          const photoInput = document.getElementById("wp-photo");
+          const photoFile = photoInput && photoInput.files[0] ? photoInput.files[0] : null;
+          try {
+            await GroupBackend.addWaypoint({ name, note, lat, lng, category, photoFile });
+          } catch (err) {
+            alert("Saved locally, but could not share it: " + err.message);
+          }
+        }
+        closePanel();
+      },
+      (err) => {
+        alert("Couldn't get your location: " + err.message);
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save Waypoint Here";
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
   });
 }
 
