@@ -1,6 +1,12 @@
 {
-  "current": "1.05",
+  "current": "1.06",
   "history": [
+    {
+      "version": "1.06",
+      "date": "2026-09-21",
+      "summary": "Add satellite+labels hybrid view, a tilt/roll meter, and fix a silent-reload bug",
+      "commit": "9059d27"
+    },
     {
       "version": "1.05",
       "date": "2026-09-21",
