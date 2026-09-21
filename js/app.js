@@ -1,5 +1,4 @@
 import * as maplibregl from "../vendor/maplibre-gl/maplibre-gl.mjs";
-window.__maplibreLoaded = true; // temporary diag flag, see index.html
 
 // Register PMTiles as a MapLibre protocol so `pmtiles://...` sources work.
 const pmtilesProtocol = new pmtiles.Protocol();
@@ -33,7 +32,6 @@ map.addControl(
   }),
   "bottom-right"
 );
-window.__mapInitialized = true; // temporary diag flag, see index.html
 
 let trailSourceCounter = 0;
 let activeWaypointMarkers = [];
@@ -293,6 +291,7 @@ async function openRegionsPanel() {
 function activateRegion(region) {
   const sourceId = `region-${region.name}`;
   if (map.getSource(sourceId)) return;
+  document.getElementById("map-hint").classList.add("hidden");
 
   const cachedSource = OfflineRegions.getSource(region);
   pmtilesProtocol.add(new pmtiles.PMTiles(cachedSource));

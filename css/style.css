@@ -26,6 +26,28 @@ html, body {
   inset: 0;
 }
 
+#map-hint {
+  position: absolute;
+  z-index: 5;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 0 40px;
+  pointer-events: none;
+}
+
+#map-hint strong {
+  color: var(--text);
+}
+
+#map-hint.hidden {
+  display: none;
+}
+
 #topbar {
   position: absolute;
   top: 0;

@@ -18,36 +18,11 @@
 </head>
 <body>
 
-<!-- Temporary on-page error reporting: shows JS errors directly on the
-     phone screen so they're visible without a computer/devtools. Remove
-     once the mobile blank-map issue is confirmed fixed. -->
-<div id="diag" style="display:none;position:fixed;inset:0;z-index:9999;background:#7f1d1d;color:#fff;font:12px/1.4 monospace;padding:14px;overflow:auto;white-space:pre-wrap;"></div>
-<script>
-(function () {
-  var box = document.getElementById("diag");
-  var lines = [];
-  function show(msg) {
-    lines.push(msg);
-    box.textContent = lines.join("\n\n");
-    box.style.display = "block";
-  }
-  window.addEventListener("error", function (e) {
-    show("[error] " + (e.message || "unknown") + "\n  at " + (e.filename || "?") + ":" + e.lineno + ":" + e.colno);
-  });
-  window.addEventListener("unhandledrejection", function (e) {
-    show("[unhandledrejection] " + (e.reason && e.reason.stack ? e.reason.stack : e.reason));
-  });
-  window.addEventListener("load", function () {
-    setTimeout(function () {
-      if (!window.__mapInitialized) {
-        show("[diag] 5s after load, window.__mapInitialized is still false — js/app.js's module script likely never ran (or hung before reaching map init). typeof maplibregl import worked: " + (typeof window.__maplibreLoaded));
-      }
-    }, 5000);
-  });
-})();
-</script>
-
 <div id="map"></div>
+<div id="map-hint">
+  No offline map downloaded yet.<br />
+  Tap <strong>Offline Maps</strong> below to download a region.
+</div>
 
 <header id="topbar">
   <span id="app-title">Trailmark</span>
