@@ -32,6 +32,10 @@ const GroupBackend = (() => {
       assignTrailFolder: disabled,
       uploadPhoto: disabled,
       photoUrl: disabled,
+      addPhoto: disabled,
+      listPhotos: disabled,
+      subscribePhotos: disabled,
+      deletePhoto: disabled,
       updateMyLocation: disabled,
       subscribeLocations: disabled,
       sendMessage: disabled,
@@ -254,6 +258,47 @@ const GroupBackend = (() => {
     return data.signedUrl;
   }
 
+  // ---------- Shared photos (snap-and-tag, standalone — see js/app.js's
+  // toolbar Photo button) ----------
+  async function addPhoto(groupId, { lat, lng, note, photoFile }) {
+    const uid = await currentUserId();
+    const photo_path = await uploadPhoto(groupId, photoFile);
+    const { data, error } = await client
+      .from("group_photos")
+      .insert({ group_id: groupId, created_by: uid, lat, lng, note: note || "", photo_path })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function listPhotos(groupId) {
+    const { data, error } = await client
+      .from("group_photos")
+      .select("*, profiles(display_name)")
+      .eq("group_id", groupId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data;
+  }
+
+  function subscribePhotos(groupId, onUpdate) {
+    listPhotos(groupId).then((data) => data && onUpdate(data));
+    return client
+      .channel(`photos-${groupId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "group_photos", filter: `group_id=eq.${groupId}` },
+        () => listPhotos(groupId).then((data) => data && onUpdate(data))
+      )
+      .subscribe();
+  }
+
+  async function deletePhoto(photoId) {
+    const { error } = await client.from("group_photos").delete().eq("id", photoId);
+    if (error) throw error;
+  }
+
   // ---------- Live location ----------
   async function updateMyLocation(groupId, lat, lng) {
     const uid = await currentUserId();
@@ -372,6 +417,10 @@ const GroupBackend = (() => {
     assignTrailFolder,
     uploadPhoto,
     photoUrl,
+    addPhoto,
+    listPhotos,
+    subscribePhotos,
+    deletePhoto,
     updateMyLocation,
     subscribeLocations,
     sendMessage,

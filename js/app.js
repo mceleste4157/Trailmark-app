@@ -663,14 +663,80 @@ photoInput.addEventListener("change", (e) => {
   // were when you took the photo."
   navigator.geolocation.getCurrentPosition(
     async (pos) => {
-      await PhotoStore.savePhoto({ lat: pos.coords.latitude, lng: pos.coords.longitude, note: "", blob: file });
+      const { latitude: lat, longitude: lng } = pos.coords;
+      await PhotoStore.savePhoto({ lat, lng, note: "", blob: file });
       await refreshPhotoMarkers();
-      alert("Photo saved at your location.");
+      // Sharing is automatic while you're in a group — same as live
+      // location — rather than a per-photo prompt breaking up the
+      // snap-and-go flow.
+      if (activeGroup) {
+        try {
+          await GroupBackend.addPhoto(activeGroup.id, { lat, lng, note: "", photoFile: file });
+          alert(`Photo saved and shared with ${activeGroup.name}.`);
+        } catch (err) {
+          alert("Photo saved locally, but couldn't share with the group: " + err.message);
+        }
+      } else {
+        alert("Photo saved at your location.");
+      }
     },
     (err) => alert("Couldn't get your location for this photo: " + err.message),
     { enableHighAccuracy: true, timeout: 10000 }
   );
 });
+
+async function refreshGroupPhotoMarkers(rows) {
+  const seen = new Set();
+  for (const row of rows) {
+    if (session && row.created_by === session.user.id) continue; // already shown via the local photo markers
+    seen.add(row.id);
+    if (groupPhotoMarkers[row.id]) continue; // already rendered this session
+    let url;
+    try {
+      url = await GroupBackend.photoUrl(row.photo_path);
+    } catch (err) {
+      console.warn("Could not load a shared photo:", err.message);
+      continue;
+    }
+
+    const el = document.createElement("div");
+    el.textContent = "📷";
+    el.style.cssText = "font-size:20px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.7));cursor:pointer;";
+
+    const container = document.createElement("div");
+    container.style.maxWidth = "220px";
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "Trail photo";
+    img.style.cssText = "width:100%;border-radius:8px;display:block;";
+    container.appendChild(img);
+    const byline = document.createElement("div");
+    byline.style.cssText = "font-size:12px;margin-top:6px;color:var(--text-dim);";
+    byline.textContent = `By ${row.profiles?.display_name || "Rider"}`;
+    container.appendChild(byline);
+    if (row.note) {
+      const note = document.createElement("div");
+      note.style.cssText = "font-size:12px;margin-top:4px;";
+      note.textContent = row.note;
+      container.appendChild(note);
+    }
+    const date = document.createElement("div");
+    date.style.cssText = "font-size:11px;color:#9ca3af;margin-top:4px;";
+    date.textContent = new Date(row.created_at).toLocaleString();
+    container.appendChild(date);
+
+    groupPhotoMarkers[row.id] = new maplibregl.Marker({ element: el })
+      .setLngLat([row.lng, row.lat])
+      .setPopup(new maplibregl.Popup().setDOMContent(container))
+      .addTo(map);
+  }
+  Object.keys(groupPhotoMarkers).forEach((id) => {
+    if (!seen.has(id)) {
+      groupPhotoMarkers[id].remove();
+      delete groupPhotoMarkers[id];
+    }
+  });
+}
 
 function openWaypointPanel() {
   openPanel(
@@ -1613,6 +1679,8 @@ let locationBroadcastWatchId = null;
 let chatChannel = null;
 let locationChannel = null;
 let emergencyChannel = null;
+let photoChannel = null;
+let groupPhotoMarkers = {};
 
 if (GroupBackend.enabled) {
   GroupBackend.getSession()
@@ -1770,6 +1838,7 @@ async function selectGroup(group) {
     if (emergencyAlert.raised_by === session.user.id) return; // don't alarm the person who raised it
     window.alert(`🆘 Emergency alert from your group!${emergencyAlert.message ? "\n" + emergencyAlert.message : ""}`);
   });
+  photoChannel = GroupBackend.subscribePhotos(group.id, refreshGroupPhotoMarkers);
   renderGroupDetailPanel();
 }
 
@@ -1780,9 +1849,12 @@ function leaveActiveGroup() {
   if (locationChannel) locationChannel.unsubscribe();
   if (chatChannel) chatChannel.unsubscribe();
   if (emergencyChannel) emergencyChannel.unsubscribe();
-  locationChannel = chatChannel = emergencyChannel = null;
+  if (photoChannel) photoChannel.unsubscribe();
+  locationChannel = chatChannel = emergencyChannel = photoChannel = null;
   Object.values(memberLocationMarkers).forEach((m) => m.remove());
   memberLocationMarkers = {};
+  Object.values(groupPhotoMarkers).forEach((m) => m.remove());
+  groupPhotoMarkers = {};
 }
 
 let chatMessages = [];
