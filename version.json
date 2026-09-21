@@ -1,6 +1,12 @@
 {
-  "current": "1.04",
+  "current": "1.05",
   "history": [
+    {
+      "version": "1.05",
+      "date": "2026-09-21",
+      "summary": "Add North-up/track-up toggle, one-tap Start Ride, geotagged photos; fix toolbar attribution bleed-through",
+      "commit": "dee8f4b"
+    },
     {
       "version": "1.04",
       "date": "2026-09-21",
