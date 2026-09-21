@@ -1,8 +1,12 @@
 // Caches the app shell so Trailmark loads with zero connectivity.
 // Map tile (.pmtiles) requests use a separate cache managed by
 // js/offline-regions.js, keyed by the region download flow.
-const SHELL_CACHE = "trailmark-shell-v4";
+const SHELL_CACHE = "trailmark-shell-v5";
 const TILES_CACHE = "trailmark-tiles";
+// Live online-basemap tiles/style/sprite/glyphs, cached opportunistically
+// as "Download This Area" (js/app.js) walks a bounding box and fetches
+// each tile — see the fetch handler below for what qualifies.
+const ONLINE_TILES_CACHE = "trailmark-online-tiles";
 
 const SHELL_ASSETS = [
   "./",
@@ -40,7 +44,7 @@ self.addEventListener("activate", (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter((key) => key !== SHELL_CACHE && key !== TILES_CACHE)
+            .filter((key) => key !== SHELL_CACHE && key !== TILES_CACHE && key !== ONLINE_TILES_CACHE)
             .map((key) => caches.delete(key))
         )
       )
@@ -71,6 +75,31 @@ self.addEventListener("fetch", (event) => {
   if (url.origin === self.location.origin) {
     event.respondWith(
       caches.match(event.request).then((cached) => cached || fetch(event.request))
+    );
+    return;
+  }
+
+  // Online basemap (style.json, sprite, vector tiles, glyph fonts) from
+  // whatever host it's actually served from — host-agnostic on purpose
+  // so this doesn't need updating if that host ever changes. Matched by
+  // path shape rather than a hardcoded domain: vector tiles and glyph
+  // fonts are ".pbf", the style document lives under "/styles/", sprite
+  // assets have "sprite" in the filename. Cache-first once downloaded
+  // (via "Download This Area" walking a bounding box, or opportunistically
+  // as you just browse online), network otherwise — GET requests only,
+  // since a cross-origin POST/analytics call has no business being cached.
+  if (
+    event.request.method === "GET" &&
+    (url.pathname.endsWith(".pbf") || url.pathname.includes("/styles/") || url.pathname.includes("sprite"))
+  ) {
+    event.respondWith(
+      caches.open(ONLINE_TILES_CACHE).then(async (cache) => {
+        const cached = await cache.match(event.request);
+        if (cached) return cached;
+        const response = await fetch(event.request);
+        if (response.ok) cache.put(event.request, response.clone());
+        return response;
+      })
     );
   }
 });

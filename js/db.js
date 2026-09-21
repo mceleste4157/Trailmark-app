@@ -24,6 +24,19 @@ db.version(2).stores({
   breadcrumbs: "++id, t",
 });
 
+db.version(3).stores({
+  trails: "++id, name, createdAt",
+  waypoints: "++id, name, createdAt",
+  regions: "++id, &name, downloadedAt",
+  breadcrumbs: "++id, t",
+  // User-drawn offline downloads of the online basemap — pan/zoom
+  // anywhere, download that exact view, not limited to the curated
+  // regions in data/regions/. The actual tiles live in the browser's
+  // Cache Storage (see sw.js's ONLINE_TILES_CACHE); this just tracks
+  // what's been downloaded so it can be listed/removed.
+  customAreas: "++id, &name, downloadedAt",
+});
+
 const TrailStore = {
   async saveTrail({ name, kind, points, distanceMeters, startedAt, endedAt, difficulty }) {
     return db.trails.add({
@@ -85,6 +98,18 @@ const BreadcrumbStore = {
   },
   async clear() {
     return db.breadcrumbs.clear();
+  },
+};
+
+const CustomAreaStore = {
+  async save({ name, bounds, minZoom, maxZoom, tileCount }) {
+    return db.customAreas.put({ name, bounds, minZoom, maxZoom, tileCount, downloadedAt: Date.now() });
+  },
+  async list() {
+    return db.customAreas.orderBy("downloadedAt").reverse().toArray();
+  },
+  async remove(name) {
+    return db.customAreas.where("name").equals(name).delete();
   },
 };
 

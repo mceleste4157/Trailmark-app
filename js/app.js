@@ -42,7 +42,13 @@ const OFFLINE_FALLBACK_STYLE = {
   ],
 };
 
-const usingOnlineBasemap = navigator.onLine;
+// Always attempt the online style first, even if navigator.onLine is
+// false at load time: a custom-downloaded area's tiles (see "Download
+// This Area" below) can only resolve offline if the style.json itself
+// was cached too, which only happens by actually requesting it — and
+// the error handler below falls back to the offline background style
+// if that request genuinely fails (nothing cached, no network).
+const usingOnlineBasemap = true;
 
 const map = new maplibregl.Map({
   container: "map",
@@ -659,8 +665,87 @@ document.getElementById("btn-planning-finish").addEventListener("click", async (
   alert(`Saved "${name}" — find it under My Trails.`);
 });
 
+// ---------- Custom area download ("select an area on the map") ----------
+// Downloads the actual online basemap's tiles for whatever you're looking
+// at — not limited to a fixed list of pre-picked regions. Works for any
+// area: an ORV park, a specific trailhead, wherever. Reads the tile URL
+// template from the live map's own already-loaded style (no hardcoded
+// host — adapts automatically if the basemap provider ever changes it),
+// then fetches every tile in the bounding box across a zoom range; the
+// service worker (sw.js) caches each one as it's fetched.
+function getOnlineVectorTileTemplate() {
+  const style = map.getStyle();
+  for (const source of Object.values(style.sources || {})) {
+    if (source.type === "vector" && source.tiles && source.tiles.length) {
+      return source.tiles[0];
+    }
+  }
+  return null;
+}
+
+function lonLatToTileXY(lon, lat, z) {
+  const n = 2 ** z;
+  const x = Math.floor(((lon + 180) / 360) * n);
+  const latRad = (lat * Math.PI) / 180;
+  const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n);
+  return [Math.max(0, Math.min(n - 1, x)), Math.max(0, Math.min(n - 1, y))];
+}
+
+function tilesForBounds(bounds, minZoom, maxZoom) {
+  const tiles = [];
+  for (let z = minZoom; z <= maxZoom; z++) {
+    const [x0, y1] = lonLatToTileXY(bounds.getWest(), bounds.getSouth(), z);
+    const [x1, y0] = lonLatToTileXY(bounds.getEast(), bounds.getNorth(), z);
+    for (let x = x0; x <= x1; x++) {
+      for (let y = y0; y <= y1; y++) {
+        tiles.push([z, x, y]);
+      }
+    }
+  }
+  return tiles;
+}
+
+async function downloadCustomArea(name, bounds, minZoom, maxZoom, onProgress) {
+  const template = getOnlineVectorTileTemplate();
+  if (!template) throw new Error("Online basemap isn't loaded — go online first, then try again.");
+  const tiles = tilesForBounds(bounds, minZoom, maxZoom);
+  let done = 0;
+  const CONCURRENCY = 8;
+  let cursor = 0;
+  async function worker() {
+    while (cursor < tiles.length) {
+      const [z, x, y] = tiles[cursor++];
+      const url = template.replace("{z}", z).replace("{x}", x).replace("{y}", y);
+      try {
+        await fetch(url); // service worker caches this on the way through
+      } catch (err) {
+        console.warn("Tile fetch failed (skipping):", url, err.message);
+      }
+      done++;
+      if (onProgress) onProgress(done / tiles.length);
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+  await CustomAreaStore.save({ name, bounds: bounds.toArray(), minZoom, maxZoom, tileCount: tiles.length });
+  return tiles.length;
+}
+
 // ---------- Offline regions ----------
 async function openRegionsPanel() {
+  const customAreas = await CustomAreaStore.list();
+  const customAreaRows = customAreas
+    .map(
+      (a) => `
+      <div class="region-item" data-custom-name="${escHtml(a.name)}">
+        <div>
+          <div>${escHtml(a.name)}</div>
+          <small>${a.tileCount} tiles · zoom ${a.minZoom}-${a.maxZoom} · ${new Date(a.downloadedAt).toLocaleDateString()}</small>
+        </div>
+        <button class="pill-btn danger" data-action="remove-custom">Remove</button>
+      </div>`
+    )
+    .join("");
+
   const regions = await OfflineRegions.listWithStatus();
   const rows = regions
     .map(
@@ -680,15 +765,69 @@ async function openRegionsPanel() {
   openPanel(
     "Offline Maps",
     `
+    <h4 style="margin-bottom:4px;">Download Current View</h4>
     <p style="color:var(--text-dim);font-size:13px;">
-      Download a region before you lose signal. See the README for how to generate
-      a .pmtiles file for a new area.
+      Pan/zoom the map to the area you want (an ORV park, a trailhead, anywhere), then download
+      it — not limited to a fixed list. Needs to be online right now to fetch the tiles.
+    </p>
+    <label>Name this area</label>
+    <input id="custom-area-name" placeholder="e.g. Morris Mountain ORV Park" />
+    <label>Detail level</label>
+    <select id="custom-area-zoom" style="width:100%;margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);">
+      <option value="4">Close area (fast, ~a few hundred tiles)</option>
+      <option value="6" selected>Medium area (a couple minutes)</option>
+      <option value="8">Wide area (slow, could be a lot of tiles)</option>
+    </select>
+    <button class="primary" id="download-custom-area-btn">Download This Area</button>
+    ${customAreaRows}
+    <h4 style="margin-bottom:4px;margin-top:18px;">Pre-built Regions</h4>
+    <p style="color:var(--text-dim);font-size:13px;">
+      Curated downloads built ahead of time (see README) — mainly useful if you want one ready
+      before this feature existed, or a very large area built server-side.
     </p>
     ${rows || "<p>No regions declared in data/regions/regions-manifest.json yet.</p>"}
     `
   );
 
-  panelBody.querySelectorAll(".region-item button").forEach((btn) => {
+  document.getElementById("download-custom-area-btn").addEventListener("click", async (e) => {
+    if (!navigator.onLine) {
+      alert("You need to be online to download an area.");
+      return;
+    }
+    const name = document.getElementById("custom-area-name").value.trim();
+    if (!name) {
+      alert("Give this area a name first.");
+      return;
+    }
+    const extraZoom = parseInt(document.getElementById("custom-area-zoom").value, 10);
+    const bounds = map.getBounds();
+    const minZoom = Math.max(0, Math.floor(map.getZoom()) - 1);
+    const maxZoom = Math.min(15, minZoom + extraZoom);
+    e.target.disabled = true;
+    e.target.textContent = "0%";
+    try {
+      const count = await downloadCustomArea(name, bounds, minZoom, maxZoom, (frac) => {
+        e.target.textContent = `${Math.round(frac * 100)}%`;
+      });
+      alert(`Downloaded "${name}" (${count} tiles). Available offline now.`);
+      openRegionsPanel();
+    } catch (err) {
+      alert("Download failed: " + err.message);
+      e.target.disabled = false;
+      e.target.textContent = "Download This Area";
+    }
+  });
+
+  panelBody.querySelectorAll('button[data-action="remove-custom"]').forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      const name = e.target.closest(".region-item").dataset.customName;
+      if (!confirm(`Remove "${name}"? You'll need to be online to re-download it.`)) return;
+      await CustomAreaStore.remove(name);
+      openRegionsPanel();
+    });
+  });
+
+  panelBody.querySelectorAll(".region-item[data-name] button").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       const item = e.target.closest(".region-item");
       const name = item.dataset.name;
