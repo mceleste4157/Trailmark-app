@@ -54,6 +54,24 @@
       ],
       "minZoom": 0,
       "maxZoom": 14
+    },
+    {
+      "name": "blue-ridge-escarpment-sc",
+      "label": "Blue Ridge Escarpment / Jocassee Gorges (SC)",
+      "file": "blue-ridge-escarpment-sc.pmtiles",
+      "attribution": "Data © OpenStreetMap contributors, ODbL. Built from geofabrik.de/north-america/us/south-carolina.",
+      "center": [
+        -82.5432842,
+        34.8416791
+      ],
+      "bounds": [
+        -83.339601,
+        34.3523739,
+        -81.7469675,
+        35.3309843
+      ],
+      "minZoom": 0,
+      "maxZoom": 14
     }
   ]
 }
