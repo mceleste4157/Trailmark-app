@@ -57,7 +57,11 @@ jobs:
         run: curl -L --fail -o planetiler.jar https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
 
       - name: Build PMTiles
-        run: java -Xmx6g -jar planetiler.jar --osm_path=clipped.osm.pbf --output=region.pmtiles
+        # --download also fetches this default (OpenMapTiles-schema) profile's
+        # auxiliary global datasets (water polygons, natural earth, lake
+        # centerlines) — osm_path is set explicitly so it reuses the already
+        # -clipped local file instead of re-downloading OSM data.
+        run: java -Xmx6g -jar planetiler.jar --download --osm_path=clipped.osm.pbf --output=region.pmtiles
 
       - name: Update regions-manifest.json from the archive's own header
         run: |
