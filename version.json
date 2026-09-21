@@ -1,6 +1,12 @@
 {
-  "current": "1.11",
+  "current": "1.12",
   "history": [
+    {
+      "version": "1.12",
+      "date": "2026-09-21",
+      "summary": "Give \"Download This Area\" failures a specific reason instead of one generic message",
+      "commit": "c61df4e"
+    },
     {
       "version": "1.11",
       "date": "2026-09-21",
