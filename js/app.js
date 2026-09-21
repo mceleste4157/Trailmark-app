@@ -106,6 +106,7 @@ toolbarButtons.forEach((btn) => {
     if (mode === "waypoint") openWaypointPanel();
     if (mode === "regions") openRegionsPanel();
     if (mode === "trails") openTrailsPanel();
+    if (mode === "group") openGroupPanel();
   });
 });
 
@@ -472,6 +473,319 @@ function showTrailOnMap(trail) {
   );
   map.fitBounds(bounds, { padding: 40 });
 }
+
+// ---------- Group (accounts, chat, live locations, emergency) ----------
+let session = null;
+let activeGroup = null;
+let memberLocationMarkers = {};
+let locationBroadcastWatchId = null;
+let chatChannel = null;
+let locationChannel = null;
+let emergencyChannel = null;
+
+if (GroupBackend.enabled) {
+  GroupBackend.getSession()
+    .then((s) => {
+      session = s;
+    })
+    .catch((err) => console.warn("Could not restore group session:", err));
+  GroupBackend.onAuthChange((s) => {
+    session = s;
+    if (!s) leaveActiveGroup();
+  });
+}
+
+async function openGroupPanel() {
+  if (!GroupBackend.enabled) {
+    openPanel(
+      "Group",
+      `<p style="color:var(--text-dim);font-size:13px;">Group features (chat, live locations, shared markers, emergency alerts) aren't set up yet — see js/group/config.js in the repo.</p>`
+    );
+    return;
+  }
+  if (!session) {
+    renderAuthPanel();
+    return;
+  }
+  if (!activeGroup) {
+    await renderGroupsListPanel();
+    return;
+  }
+  renderGroupDetailPanel();
+}
+
+function renderAuthPanel() {
+  openPanel(
+    "Sign In",
+    `
+    <label>Display name</label>
+    <input id="auth-name" placeholder="What your group sees you as" />
+    <label>Email</label>
+    <input id="auth-email" type="email" placeholder="you@example.com" />
+    <label>Password</label>
+    <input id="auth-password" type="password" placeholder="At least 6 characters" />
+    <button class="primary" id="auth-signin">Sign In</button>
+    <button class="primary" id="auth-signup" style="background:var(--panel);border:1px solid var(--border);">Create Account</button>
+    <p id="auth-error" style="color:var(--danger);font-size:13px;"></p>
+    `
+  );
+  const showError = (err) => {
+    document.getElementById("auth-error").textContent = err.message || String(err);
+  };
+  document.getElementById("auth-signin").addEventListener("click", async () => {
+    try {
+      const email = document.getElementById("auth-email").value.trim();
+      const password = document.getElementById("auth-password").value;
+      await GroupBackend.signIn(email, password);
+      session = await GroupBackend.getSession();
+      await renderGroupsListPanel();
+    } catch (err) {
+      showError(err);
+    }
+  });
+  document.getElementById("auth-signup").addEventListener("click", async () => {
+    try {
+      const name = document.getElementById("auth-name").value.trim() || "Rider";
+      const email = document.getElementById("auth-email").value.trim();
+      const password = document.getElementById("auth-password").value;
+      await GroupBackend.signUp(email, password, name);
+      session = await GroupBackend.getSession();
+      await renderGroupsListPanel();
+    } catch (err) {
+      showError(err);
+    }
+  });
+}
+
+async function renderGroupsListPanel() {
+  let groups = [];
+  try {
+    groups = await GroupBackend.myGroups();
+  } catch (err) {
+    console.warn("Could not load groups:", err);
+  }
+  const rows = groups
+    .map(
+      (g) => `<div class="region-item" data-id="${g.id}">
+        <div><div>${escHtml(g.name)}</div><small>Invite code: ${escHtml(g.invite_code)}</small></div>
+        <button class="pill-btn" data-action="open">Open</button>
+      </div>`
+    )
+    .join("");
+
+  openPanel(
+    "My Groups",
+    `
+    ${rows || '<p style="color:var(--text-dim);font-size:13px;">No groups yet.</p>'}
+    <label>Create a new group</label>
+    <input id="new-group-name" placeholder="e.g. Weekend Warriors" />
+    <button class="primary" id="create-group-btn">Create Group</button>
+    <label>Join a group</label>
+    <input id="join-group-code" placeholder="6-character invite code" style="text-transform:uppercase;" />
+    <button class="primary" id="join-group-btn">Join Group</button>
+    <button class="primary" id="sign-out-btn" style="background:var(--panel);border:1px solid var(--border);margin-top:16px;">Sign Out</button>
+    <p id="group-error" style="color:var(--danger);font-size:13px;"></p>
+    `
+  );
+  const showError = (err) => {
+    document.getElementById("group-error").textContent = err.message || String(err);
+  };
+  panelBody.querySelectorAll('.region-item button[data-action="open"]').forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.closest(".region-item").dataset.id;
+      const group = groups.find((g) => g.id === id);
+      await selectGroup(group);
+    });
+  });
+  document.getElementById("create-group-btn").addEventListener("click", async () => {
+    try {
+      const name = document.getElementById("new-group-name").value.trim();
+      if (!name) return;
+      const group = await GroupBackend.createGroup(name);
+      await selectGroup(group);
+    } catch (err) {
+      showError(err);
+    }
+  });
+  document.getElementById("join-group-btn").addEventListener("click", async () => {
+    try {
+      const code = document.getElementById("join-group-code").value.trim();
+      if (!code) return;
+      const group = await GroupBackend.joinGroup(code);
+      await selectGroup(group);
+    } catch (err) {
+      showError(err);
+    }
+  });
+  document.getElementById("sign-out-btn").addEventListener("click", async () => {
+    await GroupBackend.signOut();
+    session = null;
+    leaveActiveGroup();
+    closePanel();
+  });
+}
+
+async function selectGroup(group) {
+  activeGroup = group;
+  document.getElementById("btn-emergency").classList.remove("hidden");
+  startLocationBroadcast();
+  locationChannel = GroupBackend.subscribeLocations(group.id, refreshMemberMarkers);
+  chatMessages = [];
+  chatChannel = GroupBackend.subscribeMessages(group.id, (msg) => {
+    chatMessages.push(msg);
+    appendChatMessageIfOpen(msg);
+  });
+  emergencyChannel = GroupBackend.subscribeEmergency(group.id, (emergencyAlert) => {
+    if (emergencyAlert.raised_by === session.user.id) return; // don't alarm the person who raised it
+    window.alert(`🆘 Emergency alert from your group!${emergencyAlert.message ? "\n" + emergencyAlert.message : ""}`);
+  });
+  renderGroupDetailPanel();
+}
+
+function leaveActiveGroup() {
+  activeGroup = null;
+  document.getElementById("btn-emergency").classList.add("hidden");
+  stopLocationBroadcast();
+  if (locationChannel) locationChannel.unsubscribe();
+  if (chatChannel) chatChannel.unsubscribe();
+  if (emergencyChannel) emergencyChannel.unsubscribe();
+  locationChannel = chatChannel = emergencyChannel = null;
+  Object.values(memberLocationMarkers).forEach((m) => m.remove());
+  memberLocationMarkers = {};
+}
+
+let chatMessages = [];
+
+function renderGroupDetailPanel() {
+  openPanel(
+    escHtml(activeGroup.name),
+    `
+    <p style="color:var(--text-dim);font-size:12px;">Invite code: <strong style="color:var(--text);">${escHtml(activeGroup.invite_code)}</strong> — share this so others can join.</p>
+    <div id="chat-log" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin:8px 0;"></div>
+    <div style="display:flex;gap:6px;">
+      <input id="chat-input" placeholder="Message the group..." style="margin-top:0;flex:1;" />
+      <button class="pill-btn" id="chat-send">Send</button>
+    </div>
+    <button class="primary" id="back-to-groups-btn" style="background:var(--panel);border:1px solid var(--border);margin-top:16px;">Switch Group</button>
+    `
+  );
+  const log = document.getElementById("chat-log");
+  chatMessages.forEach((m) => log.appendChild(chatMessageEl(m)));
+  log.scrollTop = log.scrollHeight;
+
+  const send = async () => {
+    const input = document.getElementById("chat-input");
+    const body = input.value.trim();
+    if (!body) return;
+    input.value = "";
+    try {
+      await GroupBackend.sendMessage(activeGroup.id, body);
+    } catch (err) {
+      alert("Could not send message: " + err.message);
+    }
+  };
+  document.getElementById("chat-send").addEventListener("click", send);
+  document.getElementById("chat-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") send();
+  });
+  document.getElementById("back-to-groups-btn").addEventListener("click", () => {
+    leaveActiveGroup();
+    renderGroupsListPanel();
+  });
+}
+
+function chatMessageEl(m) {
+  const el = document.createElement("div");
+  el.style.fontSize = "13px";
+  el.style.marginBottom = "6px";
+  const name = m.profiles?.display_name || "Rider";
+  el.innerHTML = `<strong>${escHtml(name)}:</strong> ${escHtml(m.body)}`;
+  return el;
+}
+
+function appendChatMessageIfOpen(msg) {
+  const log = document.getElementById("chat-log");
+  if (!log) return; // panel isn't showing chat right now
+  log.appendChild(chatMessageEl(msg));
+  log.scrollTop = log.scrollHeight;
+}
+
+function refreshMemberMarkers(rows) {
+  const seen = new Set();
+  rows.forEach((row) => {
+    if (session && row.user_id === session.user.id) return; // don't show yourself
+    seen.add(row.user_id);
+    const name = row.profiles?.display_name || "Rider";
+    if (memberLocationMarkers[row.user_id]) {
+      memberLocationMarkers[row.user_id].setLngLat([row.lng, row.lat]);
+    } else {
+      const el = document.createElement("div");
+      el.style.cssText =
+        "width:14px;height:14px;border-radius:50%;background:#2563eb;border:2px solid white;box-shadow:0 0 0 2px rgba(37,99,235,0.4);";
+      memberLocationMarkers[row.user_id] = new maplibregl.Marker({ element: el })
+        .setLngLat([row.lng, row.lat])
+        .setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(escHtml(name)))
+        .addTo(map);
+    }
+  });
+  Object.keys(memberLocationMarkers).forEach((uid) => {
+    if (!seen.has(uid)) {
+      memberLocationMarkers[uid].remove();
+      delete memberLocationMarkers[uid];
+    }
+  });
+}
+
+function startLocationBroadcast() {
+  if (!("geolocation" in navigator) || locationBroadcastWatchId !== null) return;
+  let lastSent = 0;
+  locationBroadcastWatchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      const now = Date.now();
+      if (now - lastSent < 15000) return; // throttle: at most every 15s
+      lastSent = now;
+      GroupBackend.updateMyLocation(activeGroup.id, pos.coords.latitude, pos.coords.longitude).catch((err) =>
+        console.warn("Location broadcast failed:", err)
+      );
+    },
+    (err) => console.warn("Location broadcast GPS error:", err.message),
+    { enableHighAccuracy: false, maximumAge: 10000 }
+  );
+}
+
+function stopLocationBroadcast() {
+  if (locationBroadcastWatchId !== null) {
+    navigator.geolocation.clearWatch(locationBroadcastWatchId);
+    locationBroadcastWatchId = null;
+  }
+}
+
+document.getElementById("btn-emergency").addEventListener("click", async () => {
+  if (!activeGroup) return;
+  if (!confirm("Send an emergency alert to your whole group right now?")) return;
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      try {
+        await GroupBackend.raiseEmergency(activeGroup.id, {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          message: "",
+        });
+        alert("Emergency alert sent to your group.");
+      } catch (err) {
+        alert("Could not send alert: " + err.message);
+      }
+    },
+    async () => {
+      try {
+        await GroupBackend.raiseEmergency(activeGroup.id, { lat: null, lng: null, message: "" });
+        alert("Emergency alert sent (location unavailable).");
+      } catch (err) {
+        alert("Could not send alert: " + err.message);
+      }
+    }
+  );
+});
 
 // ---------- Init ----------
 if (usingOnlineBasemap) {

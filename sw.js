@@ -1,7 +1,7 @@
 // Caches the app shell so Trailmark loads with zero connectivity.
 // Map tile (.pmtiles) requests use a separate cache managed by
 // js/offline-regions.js, keyed by the region download flow.
-const SHELL_CACHE = "trailmark-shell-v2";
+const SHELL_CACHE = "trailmark-shell-v3";
 const TILES_CACHE = "trailmark-tiles";
 
 const SHELL_ASSETS = [
@@ -21,6 +21,9 @@ const SHELL_ASSETS = [
   "vendor/maplibre-gl/maplibre-gl.css",
   "vendor/pmtiles/pmtiles.js",
   "vendor/dexie/dexie.js",
+  "vendor/supabase/supabase.js",
+  "js/group/config.js",
+  "js/group/backend.js",
 ];
 
 self.addEventListener("install", (event) => {

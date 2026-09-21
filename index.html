@@ -13,6 +13,7 @@
 <link href="vendor/maplibre-gl/maplibre-gl.css" rel="stylesheet" />
 <script src="vendor/pmtiles/pmtiles.js"></script>
 <script src="vendor/dexie/dexie.js"></script>
+<script src="vendor/supabase/supabase.js"></script>
 
 <link rel="stylesheet" href="css/style.css" />
 </head>
@@ -34,7 +35,10 @@
   <button id="btn-waypoint" data-mode="waypoint" title="Drop a waypoint">Waypoint</button>
   <button id="btn-regions" data-mode="regions" title="Manage offline regions">Offline Maps</button>
   <button id="btn-trails" data-mode="trails" title="View saved trails">My Trails</button>
+  <button id="btn-group" data-mode="group" title="Group: chat, live locations, sign in">Group</button>
 </nav>
+
+<button id="btn-emergency" class="hidden" title="Alert your group">SOS</button>
 
 <div id="panel" class="hidden">
   <div id="panel-header">
@@ -54,6 +58,8 @@
 <script src="js/db.js"></script>
 <script src="js/gps.js"></script>
 <script src="js/offline-regions.js"></script>
+<script src="js/group/config.js"></script>
+<script src="js/group/backend.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>
