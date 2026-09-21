@@ -318,22 +318,60 @@ html, body {
   display: flex;
   align-items: baseline;
   gap: 4px;
+  white-space: nowrap;
 }
 
 #btn-orientation {
-  background: none;
-  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
   color: inherit;
   font: inherit;
-  padding: 2px 4px;
-  margin: -2px -4px;
-  border-radius: 8px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 999px;
   pointer-events: auto;
   cursor: pointer;
 }
 
+#btn-orientation .stat-mode {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  margin-left: 3px;
+  letter-spacing: 0.02em;
+}
+
 #btn-orientation.active {
   background: rgba(34, 197, 94, 0.18);
+  border-color: var(--accent-bright);
+}
+
+#btn-orientation.active .stat-mode {
+  color: var(--accent-bright);
+}
+
+#btn-tilt {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  color: inherit;
+  font: inherit;
+  padding: 2px 8px;
+  border-radius: 999px;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#btn-tilt.active {
+  background: rgba(34, 197, 94, 0.18);
+  border-color: var(--accent-bright);
+}
+
+#btn-tilt.warn {
+  background: rgba(220, 38, 38, 0.22);
+  border-color: var(--danger);
+}
+
+#btn-tilt.warn .stat-value {
+  color: var(--danger);
 }
 
 #stats-hud .stat-value {

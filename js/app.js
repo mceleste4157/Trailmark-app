@@ -26,8 +26,23 @@ const SATELLITE_STYLE = {
       tileSize: 256,
       attribution: "Esri, Maxar, Earthstar Geographics, and the GIS User Community",
     },
+    // Esri's free "hybrid" reference layer — transparent PNG tiles with
+    // just place names, road labels, and boundaries, meant to sit on top
+    // of World_Imagery exactly like this. Same server/ToS as the imagery
+    // above, no separate API key.
+    "esri-labels": {
+      type: "raster",
+      tiles: [
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+      ],
+      tileSize: 256,
+      attribution: "Esri",
+    },
   },
-  layers: [{ id: "esri-satellite-layer", type: "raster", source: "esri-satellite" }],
+  layers: [
+    { id: "esri-satellite-layer", type: "raster", source: "esri-satellite" },
+    { id: "esri-labels-layer", type: "raster", source: "esri-labels" },
+  ],
 };
 
 const OFFLINE_FALLBACK_STYLE = {
@@ -121,11 +136,13 @@ function compassLabel(deg) {
 // North-up (default) vs. track-up (map rotates so your current heading
 // always points to the top of the screen, like onX/most nav apps).
 const btnOrientation = document.getElementById("btn-orientation");
+const statOrientationModeEl = document.getElementById("stat-orientation-mode");
 let orientationMode = "north"; // "north" | "track"
 
 btnOrientation.addEventListener("click", () => {
   orientationMode = orientationMode === "north" ? "track" : "north";
   btnOrientation.classList.toggle("active", orientationMode === "track");
+  statOrientationModeEl.textContent = orientationMode === "track" ? "TRK-UP" : "N-UP";
   btnOrientation.title =
     orientationMode === "track"
       ? "Track-up: map rotates to your direction of travel. Tap for North-up."
@@ -162,6 +179,53 @@ function updateStatsHud(position) {
   // Altitude support varies a lot by device/browser, hence the "--".
   statElevationEl.textContent = typeof altitude === "number" && isFinite(altitude) ? Math.round(altitude * 3.28084) : "--";
 }
+
+// ---------- Tilt / roll meter ----------
+// Left-right lean angle, read from the device's own tilt sensor — mount
+// the phone the way it actually rides in the vehicle (usually upright in
+// a dash/window mount) and this becomes a rough "how far over am I"
+// gauge. Not a certified inclinometer, just a heads-up.
+const btnTilt = document.getElementById("btn-tilt");
+const statTiltEl = document.getElementById("stat-tilt");
+const TILT_WARN_DEGREES = 25;
+let tiltListening = false;
+
+function formatTilt(gamma) {
+  const rounded = Math.round(Math.abs(gamma));
+  if (rounded === 0) return "0°";
+  return `${rounded}°${gamma > 0 ? "R" : "L"}`;
+}
+
+function onDeviceOrientation(event) {
+  if (typeof event.gamma !== "number") return;
+  statTiltEl.textContent = formatTilt(event.gamma);
+  btnTilt.classList.toggle("warn", Math.abs(event.gamma) >= TILT_WARN_DEGREES);
+}
+
+async function enableTilt() {
+  if (tiltListening) return;
+  // iOS 13+ gates this sensor behind an explicit permission prompt that
+  // must be triggered by a direct tap (same "no drive-by prompts" rule
+  // as the location banner elsewhere in this app) — everywhere else
+  // (Android, desktop) it just works without asking.
+  if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+    try {
+      const result = await DeviceOrientationEvent.requestPermission();
+      if (result !== "granted") {
+        alert("Tilt sensor access was denied — enable it in your browser's site settings, then tap here to retry.");
+        return;
+      }
+    } catch (err) {
+      alert("Couldn't request tilt sensor access: " + err.message);
+      return;
+    }
+  }
+  window.addEventListener("deviceorientation", onDeviceOrientation);
+  tiltListening = true;
+  btnTilt.classList.add("active");
+}
+
+btnTilt.addEventListener("click", enableTilt);
 
 geolocateControl.on("geolocate", updateStatsHud);
 
@@ -2014,8 +2078,20 @@ if ("serviceWorker" in navigator) {
       });
   });
 
+  // A brand-new install (no previous service worker for this origin) also
+  // fires "controllerchange" the moment the very first worker calls
+  // clients.claim() — that's not an update, there's nothing to reload
+  // for, and reloading anyway defeats the whole point of this being a
+  // deliberate, user-initiated action rather than a silent auto-reload.
+  // Only genuinely reload when we're moving from an already-active
+  // controller to a new one.
+  let hadController = !!navigator.serviceWorker.controller;
   let reloadedForUpdate = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController) {
+      hadController = true;
+      return;
+    }
     if (reloadedForUpdate) return;
     reloadedForUpdate = true;
     location.reload();
