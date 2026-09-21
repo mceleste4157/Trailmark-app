@@ -1,6 +1,12 @@
 {
-  "current": "1.08",
+  "current": "1.09",
   "history": [
+    {
+      "version": "1.09",
+      "date": "2026-09-21",
+      "summary": "Remove groups — one shared space for everyone signed in",
+      "commit": "53999d3"
+    },
     {
       "version": "1.08",
       "date": "2026-09-21",
