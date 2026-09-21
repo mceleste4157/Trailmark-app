@@ -1,6 +1,12 @@
 {
-  "current": "1.01",
+  "current": "1.02",
   "history": [
+    {
+      "version": "1.02",
+      "date": "2026-09-21",
+      "summary": "Add Netlify config for a nicer hosting URL",
+      "commit": "560db01"
+    },
     {
       "version": "1.01",
       "date": "2026-09-21",
