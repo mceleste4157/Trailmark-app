@@ -36,6 +36,24 @@
       ],
       "minZoom": 0,
       "maxZoom": 14
+    },
+    {
+      "name": "great-smoky-mountains-tn",
+      "label": "Great Smoky Mountains / Cherokee National Forest (TN)",
+      "file": "great-smoky-mountains-tn.pmtiles",
+      "attribution": "Data © OpenStreetMap contributors, ODbL. Built from geofabrik.de/north-america/us/tennessee.",
+      "center": [
+        -83.5343585,
+        35.8473292
+      ],
+      "bounds": [
+        -84.5408431,
+        35.1757464,
+        -82.5278739,
+        36.5189121
+      ],
+      "minZoom": 0,
+      "maxZoom": 14
     }
   ]
 }
