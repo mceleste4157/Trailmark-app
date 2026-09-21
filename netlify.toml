@@ -1,0 +1,17 @@
+[build]
+  publish = "."
+  command = ""
+
+# Service worker + offline app: don't let Netlify's CDN cache these paths
+# so a new deploy is picked up (js/app.js already handles the "Update
+# available" banner on top of this — this just stops HTTP caching from
+# masking that a new sw.js exists at all).
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/version.json"
+  [headers.values]
+    Cache-Control = "no-cache"
