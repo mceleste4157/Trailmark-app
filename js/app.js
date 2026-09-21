@@ -1118,7 +1118,7 @@ async function openTrailsPanel() {
       (t) => `
       <div class="trail-item" data-id="${t.id}">
         <div>
-          <div>${escHtml(t.name)} <small style="color:var(--text-dim);">${t.kind === "planned" ? "(planned)" : "(recorded)"}</small></div>
+          <div>${escHtml(t.name)} <small style="color:var(--text-dim);">${t.kind === "planned" ? "(planned)" : t.kind === "imported" ? "(imported)" : "(recorded)"}</small></div>
           <small>${metersToMiles(t.distanceMeters).toFixed(2)} mi · ${difficultyLabel(t.difficulty)} · ${new Date(t.createdAt).toLocaleDateString()}</small>
         </div>
         <div>
@@ -1136,12 +1136,31 @@ async function openTrailsPanel() {
     "My Trails",
     `
     <div class="region-item">
+      <div><div>Import GPX</div><small>From onX, Gaia, AllTrails, or a GPS unit — brings in the track and any waypoints</small></div>
+      <button class="pill-btn" id="import-gpx-btn">Import</button>
+    </div>
+    <input type="file" id="import-gpx-input" accept=".gpx,application/gpx+xml" style="display:none;" />
+    <div class="region-item">
       <div><div>Breadcrumb trail</div><small>${breadcrumbCount} points logged passively — everywhere you've been, not a named trail</small></div>
       <button class="pill-btn danger" id="clear-breadcrumb-btn">Clear</button>
     </div>
     ${rows || "<p>No saved trails yet. Tap Record to track one.</p>"}
     `
   );
+  document.getElementById("import-gpx-btn").addEventListener("click", () => {
+    document.getElementById("import-gpx-input").click();
+  });
+  document.getElementById("import-gpx-input").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      await importGpxFile(file);
+    } catch (err) {
+      alert("Couldn't import that GPX file: " + err.message);
+    }
+    openTrailsPanel();
+  });
   document.getElementById("clear-breadcrumb-btn").addEventListener("click", async () => {
     if (!confirm(`Clear all ${breadcrumbCount} breadcrumb points? This can't be undone.`)) return;
     await clearBreadcrumbTrail();
@@ -1208,6 +1227,114 @@ ${points}
   </trk>
 </gpx>
 `;
+}
+
+// GPX import — reads track(s), route(s), and waypoints out of a GPX file
+// from onX (or Gaia, AllTrails, a Garmin unit, anything GPX-compliant) so
+// existing trail data doesn't have to be re-mapped by hand. Uses the
+// browser's built-in XML parser rather than a library; GPX files almost
+// always use an unprefixed default namespace, so plain tag-name lookups
+// (confirmed against real onX/Gaia exports) work without namespace juggling.
+function parseGpx(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+  if (doc.querySelector("parsererror")) {
+    throw new Error("That file isn't valid GPX/XML.");
+  }
+
+  function readPoints(pointEls) {
+    const points = [];
+    for (const pt of pointEls) {
+      const lat = parseFloat(pt.getAttribute("lat"));
+      const lng = parseFloat(pt.getAttribute("lon"));
+      if (!isFinite(lat) || !isFinite(lng)) continue;
+      const point = { lat, lng };
+      const eleEl = pt.getElementsByTagName("ele")[0];
+      if (eleEl) {
+        const ele = parseFloat(eleEl.textContent);
+        if (isFinite(ele)) point.ele = ele;
+      }
+      const timeEl = pt.getElementsByTagName("time")[0];
+      if (timeEl) {
+        const t = Date.parse(timeEl.textContent);
+        if (isFinite(t)) point.t = t;
+      }
+      points.push(point);
+    }
+    return points;
+  }
+
+  const tracks = [];
+  for (const trk of doc.getElementsByTagName("trk")) {
+    const nameEl = trk.getElementsByTagName("name")[0];
+    // A track can have multiple <trkseg> (e.g. GPS paused and resumed) —
+    // concatenate them into one continuous line, same as a single Trailmark
+    // recording session would produce.
+    const points = readPoints(trk.getElementsByTagName("trkpt"));
+    if (points.length >= 2) tracks.push({ name: nameEl ? nameEl.textContent.trim() : "", points });
+  }
+
+  // Some tools (including onX, for a planned-but-not-driven route) export
+  // a <rte> instead of a <trk>. Only used as a fallback so a file with
+  // real tracks doesn't also import them a second time as routes.
+  if (tracks.length === 0) {
+    for (const rte of doc.getElementsByTagName("rte")) {
+      const nameEl = rte.getElementsByTagName("name")[0];
+      const points = readPoints(rte.getElementsByTagName("rtept"));
+      if (points.length >= 2) tracks.push({ name: nameEl ? nameEl.textContent.trim() : "", points });
+    }
+  }
+
+  const waypoints = [];
+  for (const wpt of doc.getElementsByTagName("wpt")) {
+    const lat = parseFloat(wpt.getAttribute("lat"));
+    const lng = parseFloat(wpt.getAttribute("lon"));
+    if (!isFinite(lat) || !isFinite(lng)) continue;
+    const nameEl = wpt.getElementsByTagName("name")[0];
+    const descEl = wpt.getElementsByTagName("desc")[0];
+    waypoints.push({
+      lat,
+      lng,
+      name: nameEl && nameEl.textContent.trim() ? nameEl.textContent.trim() : "Imported waypoint",
+      note: descEl ? descEl.textContent.trim() : "",
+    });
+  }
+
+  return { tracks, waypoints };
+}
+
+async function importGpxFile(file) {
+  const text = await file.text();
+  const { tracks, waypoints } = parseGpx(text);
+  if (tracks.length === 0 && waypoints.length === 0) {
+    throw new Error("No tracks, routes, or waypoints found in that file.");
+  }
+
+  const baseName = file.name.replace(/\.gpx$/i, "");
+  let firstImportedId = null;
+  for (const [i, track] of tracks.entries()) {
+    const name = track.name || (tracks.length > 1 ? `${baseName} (${i + 1})` : baseName);
+    const times = track.points.map((p) => p.t).filter((t) => typeof t === "number");
+    const id = await TrailStore.saveTrail({
+      name,
+      kind: "imported",
+      points: track.points,
+      distanceMeters: totalDistanceMeters(track.points),
+      startedAt: times.length ? Math.min(...times) : null,
+      endedAt: times.length ? Math.max(...times) : null,
+      difficulty: null,
+    });
+    if (firstImportedId === null) firstImportedId = id;
+  }
+  for (const wpt of waypoints) {
+    await WaypointStore.saveWaypoint({ name: wpt.name, lat: wpt.lat, lng: wpt.lng, note: wpt.note, category: "other" });
+  }
+  if (waypoints.length) await refreshWaypointMarkers();
+  if (firstImportedId !== null) showTrailOnMap(await TrailStore.getTrail(firstImportedId));
+
+  const parts = [];
+  if (tracks.length) parts.push(`${tracks.length} trail${tracks.length === 1 ? "" : "s"}`);
+  if (waypoints.length) parts.push(`${waypoints.length} waypoint${waypoints.length === 1 ? "" : "s"}`);
+  alert(`Imported ${parts.join(" and ")}.`);
 }
 
 function downloadFile(filename, content, mime) {
