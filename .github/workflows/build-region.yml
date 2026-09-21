@@ -1,11 +1,12 @@
 name: Build offline map region
 
 # Downloads a Geofabrik OSM extract, clips it to a bounding box, and builds
-# a PMTiles archive with Planetiler (the same tool/schema Protomaps' own
-# basemap tiles use — matches the earth/landuse/water/buildings/roads
-# layers js/app.js styles). Runs on GitHub's runners because they have
-# unrestricted internet access to OSM data sources that some sandboxed dev
-# environments (this repo was originally scaffolded from one) may not.
+# a PMTiles archive with Planetiler's default profile (OpenMapTiles schema —
+# matches the landcover/landuse/water/building/transportation/mountain_peak
+# layers js/app.js styles; confirmed against a real built archive, not
+# assumed). Runs on GitHub's runners because they have unrestricted internet
+# access to OSM data sources that some sandboxed dev environments (this repo
+# was originally scaffolded from one) may not.
 on:
   workflow_dispatch:
     inputs:
@@ -56,10 +57,21 @@ jobs:
       - name: Download Planetiler
         run: curl -L --fail -o planetiler.jar https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
 
+      # These auxiliary global datasets (water polygons, natural earth, lake
+      # centerlines) are the same ~hundreds-of-MB files on every run
+      # regardless of region — cache them instead of re-downloading (and
+      # re-risking a flaky fetch, per the South Carolina build's transient
+      # timeout on water-polygons-split-3857.zip) every single time.
+      - name: Cache Planetiler auxiliary sources
+        uses: actions/cache@v4
+        with:
+          path: data/sources
+          key: planetiler-aux-sources-v1
+
       - name: Build PMTiles
-        # --download also fetches this default (OpenMapTiles-schema) profile's
-        # auxiliary global datasets (water polygons, natural earth, lake
-        # centerlines) — osm_path is set explicitly so it reuses the already
+        # --download fetches whichever of the above the cache didn't already
+        # have, plus this default (OpenMapTiles-schema) profile's other
+        # sources — osm_path is set explicitly so it reuses the already
         # -clipped local file instead of re-downloading OSM data.
         run: java -Xmx6g -jar planetiler.jar --download --osm_path=clipped.osm.pbf --output=region.pmtiles
 
