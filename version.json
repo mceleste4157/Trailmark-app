@@ -1,6 +1,12 @@
 {
-  "current": "1.13",
+  "current": "1.14",
   "history": [
+    {
+      "version": "1.14",
+      "date": "2026-09-21",
+      "summary": "Remove SOS alerts, show who dropped a shared waypoint, fix photo GPS fallback",
+      "commit": "20e707d"
+    },
     {
       "version": "1.13",
       "date": "2026-09-21",
