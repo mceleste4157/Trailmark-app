@@ -24,6 +24,7 @@ const SHELL_ASSETS = [
   "vendor/supabase/supabase.js",
   "js/group/config.js",
   "js/group/backend.js",
+  "js/cell-coverage.js",
 ];
 
 self.addEventListener("install", (event) => {

@@ -20,11 +20,16 @@ const GroupBackend = (() => {
       myGroups: disabled,
       createGroup: disabled,
       joinGroup: disabled,
+      createFolder: disabled,
+      listFolders: disabled,
       addWaypoint: disabled,
       listWaypoints: disabled,
       addTrail: disabled,
       setTrailRating: disabled,
+      setTrailDifficulty: disabled,
       listTrails: disabled,
+      assignWaypointFolder: disabled,
+      assignTrailFolder: disabled,
       uploadPhoto: disabled,
       photoUrl: disabled,
       updateMyLocation: disabled,
@@ -120,14 +125,47 @@ const GroupBackend = (() => {
     return data;
   }
 
+  // ---------- Trip folders ----------
+  async function createFolder(groupId, name, description) {
+    const uid = await currentUserId();
+    const { data, error } = await client
+      .from("group_trip_folders")
+      .insert({ group_id: groupId, created_by: uid, name, description: description || "" })
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function listFolders(groupId) {
+    const { data, error } = await client
+      .from("group_trip_folders")
+      .select()
+      .eq("group_id", groupId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data;
+  }
+
   // ---------- Shared waypoints ----------
-  async function addWaypoint(groupId, { name, note, lat, lng, photoFile }) {
+  // category: 'trailhead' | 'campsite' | 'fuel' | 'water_crossing' | 'obstacle' | 'hazard' | 'other'
+  async function addWaypoint(groupId, { name, note, lat, lng, category, folderId, photoFile }) {
     const uid = await currentUserId();
     let photo_path = null;
     if (photoFile) photo_path = await uploadPhoto(groupId, photoFile);
     const { data, error } = await client
       .from("group_waypoints")
-      .insert({ group_id: groupId, created_by: uid, name, note: note || "", lat, lng, photo_path })
+      .insert({
+        group_id: groupId,
+        created_by: uid,
+        name,
+        note: note || "",
+        lat,
+        lng,
+        category: category || "other",
+        folder_id: folderId || null,
+        photo_path,
+      })
       .select()
       .single();
     if (error) throw error;
@@ -145,7 +183,7 @@ const GroupBackend = (() => {
   }
 
   // ---------- Shared trails ----------
-  async function addTrail(groupId, { name, kind, points, distanceMeters, photoFile }) {
+  async function addTrail(groupId, { name, kind, points, distanceMeters, difficulty, folderId, photoFile }) {
     const uid = await currentUserId();
     let photo_path = null;
     if (photoFile) photo_path = await uploadPhoto(groupId, photoFile);
@@ -158,6 +196,8 @@ const GroupBackend = (() => {
         kind: kind || "recorded",
         points,
         distance_meters: distanceMeters,
+        difficulty: difficulty || null,
+        folder_id: folderId || null,
         photo_path,
       })
       .select()
@@ -172,6 +212,12 @@ const GroupBackend = (() => {
     if (error) throw error;
   }
 
+  async function setTrailDifficulty(trailId, difficulty) {
+    // difficulty: 1-10 or null
+    const { error } = await client.from("group_trails").update({ difficulty }).eq("id", trailId);
+    if (error) throw error;
+  }
+
   async function listTrails(groupId) {
     const { data, error } = await client
       .from("group_trails")
@@ -180,6 +226,16 @@ const GroupBackend = (() => {
       .order("created_at", { ascending: false });
     if (error) throw error;
     return data;
+  }
+
+  async function assignWaypointFolder(waypointId, folderId) {
+    const { error } = await client.from("group_waypoints").update({ folder_id: folderId }).eq("id", waypointId);
+    if (error) throw error;
+  }
+
+  async function assignTrailFolder(trailId, folderId) {
+    const { error } = await client.from("group_trails").update({ folder_id: folderId }).eq("id", trailId);
+    if (error) throw error;
   }
 
   // ---------- Photos ----------
@@ -304,11 +360,16 @@ const GroupBackend = (() => {
     myGroups,
     createGroup,
     joinGroup,
+    createFolder,
+    listFolders,
     addWaypoint,
     listWaypoints,
     addTrail,
     setTrailRating,
+    setTrailDifficulty,
     listTrails,
+    assignWaypointFolder,
+    assignTrailFolder,
     uploadPhoto,
     photoUrl,
     updateMyLocation,

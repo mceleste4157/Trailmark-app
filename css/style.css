@@ -120,10 +120,23 @@ html, body {
   cursor: pointer;
 }
 
-#btn-terrain.active-pill {
+#btn-terrain.active-pill,
+#btn-cell.active-pill {
   border-color: var(--accent-bright);
   color: var(--accent-bright);
 }
+
+#btn-cell {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+}
+
+#btn-cell.hidden { display: none; }
 
 #toolbar {
   position: absolute;

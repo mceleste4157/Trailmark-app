@@ -13,7 +13,7 @@ db.version(1).stores({
 });
 
 const TrailStore = {
-  async saveTrail({ name, kind, points, distanceMeters, startedAt, endedAt }) {
+  async saveTrail({ name, kind, points, distanceMeters, startedAt, endedAt, difficulty }) {
     return db.trails.add({
       name,
       kind: kind || "recorded", // 'recorded' (GPS-tracked) | 'planned' (drawn on the map ahead of time)
@@ -21,8 +21,12 @@ const TrailStore = {
       distanceMeters,
       startedAt,
       endedAt,
+      difficulty: difficulty || null, // 1-10, onX-style technical difficulty rating
       createdAt: Date.now(),
     });
+  },
+  async setDifficulty(id, difficulty) {
+    return db.trails.update(id, { difficulty });
   },
   async listTrails() {
     return db.trails.orderBy("createdAt").reverse().toArray();
@@ -35,9 +39,19 @@ const TrailStore = {
   },
 };
 
+// trailhead | campsite | fuel | water_crossing | obstacle | hazard | other
+const WAYPOINT_CATEGORIES = ["trailhead", "campsite", "fuel", "water_crossing", "obstacle", "hazard", "other"];
+
 const WaypointStore = {
-  async saveWaypoint({ name, lat, lng, note }) {
-    return db.waypoints.add({ name, lat, lng, note: note || "", createdAt: Date.now() });
+  async saveWaypoint({ name, lat, lng, note, category }) {
+    return db.waypoints.add({
+      name,
+      lat,
+      lng,
+      note: note || "",
+      category: category || "other",
+      createdAt: Date.now(),
+    });
   },
   async listWaypoints() {
     return db.waypoints.orderBy("createdAt").reverse().toArray();

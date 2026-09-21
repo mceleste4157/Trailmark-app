@@ -105,6 +105,7 @@ document.getElementById("btn-basemap")?.addEventListener("click", () => {
 map.on("style.load", () => {
   activeRegionObjects.forEach((region) => activateRegion(region));
   if (hillshadeOn) addHillshadeLayer();
+  if (cellTowersOn) refreshCellTowerLayer().catch((err) => console.warn("Cell tower re-layer failed:", err));
 });
 
 // ---------- Terrain hillshade (elevation relief) ----------
@@ -150,6 +151,60 @@ function toggleHillshade() {
 }
 
 document.getElementById("btn-terrain")?.addEventListener("click", toggleHillshade);
+
+// ---------- Cell tower locations (rough coverage proxy) ----------
+let cellTowersOn = false;
+const CELL_SOURCE_ID = "cell-towers";
+
+if (CellCoverage.enabled) {
+  document.getElementById("btn-cell").classList.remove("hidden");
+}
+
+async function refreshCellTowerLayer() {
+  const towers = await CellCoverage.fetchTowers(map.getBounds());
+  const geojson = CellCoverage.towersToCircleGeoJSON(towers);
+  if (map.getSource(CELL_SOURCE_ID)) {
+    map.getSource(CELL_SOURCE_ID).setData(geojson);
+  } else {
+    map.addSource(CELL_SOURCE_ID, { type: "geojson", data: geojson });
+    map.addLayer({
+      id: CELL_SOURCE_ID,
+      type: "circle",
+      source: CELL_SOURCE_ID,
+      paint: {
+        "circle-radius": 5,
+        "circle-color": "#facc15",
+        "circle-stroke-width": 1,
+        "circle-stroke-color": "#78350f",
+        "circle-opacity": 0.8,
+      },
+    });
+  }
+}
+
+async function toggleCellTowers() {
+  if (!navigator.onLine) {
+    alert("Cell tower data needs an internet connection.");
+    return;
+  }
+  cellTowersOn = !cellTowersOn;
+  const btn = document.getElementById("btn-cell");
+  btn.classList.toggle("active-pill", cellTowersOn);
+  if (!cellTowersOn) {
+    if (map.getLayer(CELL_SOURCE_ID)) map.removeLayer(CELL_SOURCE_ID);
+    if (map.getSource(CELL_SOURCE_ID)) map.removeSource(CELL_SOURCE_ID);
+    return;
+  }
+  try {
+    await refreshCellTowerLayer();
+  } catch (err) {
+    alert("Could not load cell tower data: " + err.message);
+    cellTowersOn = false;
+    btn.classList.remove("active-pill");
+  }
+}
+
+document.getElementById("btn-cell")?.addEventListener("click", toggleCellTowers);
 
 let trailSourceCounter = 0;
 let activeWaypointMarkers = [];
@@ -207,14 +262,44 @@ toolbarButtons.forEach((btn) => {
 });
 
 // ---------- Waypoints ----------
+const CATEGORY_COLORS = {
+  trailhead: "#22c55e",
+  campsite: "#f59e0b",
+  fuel: "#ef4444",
+  water_crossing: "#38bdf8",
+  obstacle: "#a855f7",
+  hazard: "#dc2626",
+  other: "#facc15",
+};
+const CATEGORY_LABELS = {
+  trailhead: "Trailhead",
+  campsite: "Campsite",
+  fuel: "Fuel",
+  water_crossing: "Water Crossing",
+  obstacle: "Obstacle",
+  hazard: "Hazard",
+  other: "Other",
+};
+
+function categoryOptionsHtml(selected) {
+  return WAYPOINT_CATEGORIES.map(
+    (c) => `<option value="${c}" ${c === selected ? "selected" : ""}>${CATEGORY_LABELS[c]}</option>`
+  ).join("");
+}
+
 async function refreshWaypointMarkers() {
   activeWaypointMarkers.forEach((m) => m.remove());
   activeWaypointMarkers = [];
   const waypoints = await WaypointStore.listWaypoints();
   waypoints.forEach((wp) => {
-    const marker = new maplibregl.Marker({ color: "#facc15" })
+    const color = CATEGORY_COLORS[wp.category] || CATEGORY_COLORS.other;
+    const marker = new maplibregl.Marker({ color })
       .setLngLat([wp.lng, wp.lat])
-      .setPopup(new maplibregl.Popup().setHTML(`<strong>${escHtml(wp.name)}</strong><br>${escHtml(wp.note || "")}`))
+      .setPopup(
+        new maplibregl.Popup().setHTML(
+          `<strong>${escHtml(wp.name)}</strong> <span style="color:#6b7280;">(${CATEGORY_LABELS[wp.category] || "Other"})</span><br>${escHtml(wp.note || "")}`
+        )
+      )
       .addTo(map);
     activeWaypointMarkers.push(marker);
   });
@@ -226,18 +311,48 @@ function openWaypointPanel() {
     `
     <p style="color:var(--text-dim);font-size:13px;">Uses your current map center. Pan the map first, then save.</p>
     <label>Name</label>
-    <input id="wp-name" placeholder="e.g. Trailhead, Water source" />
+    <input id="wp-name" placeholder="e.g. Creek Crossing" />
+    <label>Category</label>
+    <select id="wp-category" style="width:100%;margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);">
+      ${categoryOptionsHtml("other")}
+    </select>
     <label>Note (optional)</label>
     <textarea id="wp-note" rows="2" placeholder="Notes..."></textarea>
+    ${
+      activeGroup
+        ? `<label><input type="checkbox" id="wp-share" /> Share with ${escHtml(activeGroup.name)}</label>
+           <label>Photo (optional, shared waypoints only)</label>
+           <input type="file" id="wp-photo" accept="image/*" />`
+        : ""
+    }
     <button class="primary" id="wp-save">Save Waypoint Here</button>
     `
   );
   document.getElementById("wp-save").addEventListener("click", async () => {
     const name = document.getElementById("wp-name").value.trim() || "Unnamed waypoint";
+    const category = document.getElementById("wp-category").value;
     const note = document.getElementById("wp-note").value.trim();
     const center = map.getCenter();
-    await WaypointStore.saveWaypoint({ name, lat: center.lat, lng: center.lng, note });
+    await WaypointStore.saveWaypoint({ name, lat: center.lat, lng: center.lng, note, category });
     await refreshWaypointMarkers();
+
+    const shareBox = document.getElementById("wp-share");
+    if (shareBox && shareBox.checked && activeGroup) {
+      const photoInput = document.getElementById("wp-photo");
+      const photoFile = photoInput && photoInput.files[0] ? photoInput.files[0] : null;
+      try {
+        await GroupBackend.addWaypoint(activeGroup.id, {
+          name,
+          note,
+          lat: center.lat,
+          lng: center.lng,
+          category,
+          photoFile,
+        });
+      } catch (err) {
+        alert("Saved locally, but could not share with group: " + err.message);
+      }
+    }
     closePanel();
   });
 }
@@ -612,6 +727,73 @@ function activateRegion(region) {
     },
     paint: { "text-color": "#e2e8f0", "text-halo-color": "#0f172a", "text-halo-width": 1 },
   });
+  // Points of interest relevant to trip planning (confirmed against the
+  // actual poi layer classes in a real built region, not guessed): fuel,
+  // campsite, parking, picnic_site, drinking_water, lodging, toilets.
+  // Colored circle + short ASCII label instead of emoji: MapLibre's SDF
+  // text rendering doesn't support color emoji without a sprite sheet —
+  // tried that first, got "missing glyph" boxes in local testing, so
+  // this renders as plain text instead, which is confirmed working (the
+  // peak-name labels above use the same approach).
+  map.addLayer({
+    id: `${sourceId}-poi`,
+    type: "circle",
+    source: sourceId,
+    "source-layer": "poi",
+    minzoom: 12,
+    filter: [
+      "in",
+      ["get", "class"],
+      ["literal", ["fuel", "campsite", "parking", "picnic_site", "drinking_water", "lodging", "toilets"]],
+    ],
+    paint: {
+      "circle-radius": 5,
+      "circle-stroke-width": 1,
+      "circle-stroke-color": "#0f172a",
+      "circle-color": [
+        "match",
+        ["get", "class"],
+        "fuel", "#f59e0b",
+        "campsite", "#22c55e",
+        "parking", "#60a5fa",
+        "picnic_site", "#a78bfa",
+        "drinking_water", "#38bdf8",
+        "lodging", "#f472b6",
+        "toilets", "#94a3b8",
+        "#e2e8f0",
+      ],
+    },
+  });
+  map.addLayer({
+    id: `${sourceId}-poi-label`,
+    type: "symbol",
+    source: sourceId,
+    "source-layer": "poi",
+    minzoom: 13,
+    filter: [
+      "in",
+      ["get", "class"],
+      ["literal", ["fuel", "campsite", "parking", "picnic_site", "drinking_water", "lodging", "toilets"]],
+    ],
+    layout: {
+      "text-field": [
+        "match",
+        ["get", "class"],
+        "fuel", "Fuel",
+        "campsite", "Camp",
+        "parking", "Parking",
+        "picnic_site", "Picnic",
+        "drinking_water", "Water",
+        "lodging", "Lodging",
+        "toilets", "Restroom",
+        "POI",
+      ],
+      "text-size": 10,
+      "text-offset": [0, 0.9],
+      "text-anchor": "top",
+    },
+    paint: { "text-color": "#e2e8f0", "text-halo-color": "#0f172a", "text-halo-width": 1 },
+  });
   if (region.bounds) {
     map.fitBounds(region.bounds, { padding: 20 });
   }
@@ -625,6 +807,10 @@ async function restoreDownloadedRegions() {
 }
 
 // ---------- Saved trails ----------
+function difficultyLabel(d) {
+  return d ? `Difficulty ${d}/10` : "Unrated";
+}
+
 async function openTrailsPanel() {
   const trails = await TrailStore.listTrails();
   const rows = trails
@@ -633,10 +819,11 @@ async function openTrailsPanel() {
       <div class="trail-item" data-id="${t.id}">
         <div>
           <div>${escHtml(t.name)} <small style="color:var(--text-dim);">${t.kind === "planned" ? "(planned)" : "(recorded)"}</small></div>
-          <small>${metersToMiles(t.distanceMeters).toFixed(2)} mi · ${new Date(t.createdAt).toLocaleDateString()}</small>
+          <small>${metersToMiles(t.distanceMeters).toFixed(2)} mi · ${difficultyLabel(t.difficulty)} · ${new Date(t.createdAt).toLocaleDateString()}</small>
         </div>
         <div>
           <button class="pill-btn" data-action="show">Show</button>
+          <button class="pill-btn" data-action="rate">Rate</button>
           <button class="pill-btn" data-action="export">GPX</button>
           ${activeGroup ? '<button class="pill-btn" data-action="share">Share</button>' : ""}
           <button class="pill-btn danger" data-action="delete">Delete</button>
@@ -654,6 +841,12 @@ async function openTrailsPanel() {
       if (action === "delete") {
         await TrailStore.deleteTrail(id);
         openTrailsPanel();
+      } else if (action === "rate") {
+        const input = prompt("Technical difficulty, 1 (easy) to 10 (extreme). Leave blank to clear.");
+        if (input === null) return;
+        const value = input.trim() === "" ? null : Math.max(1, Math.min(10, parseInt(input, 10) || 0));
+        await TrailStore.setDifficulty(id, value);
+        openTrailsPanel();
       } else if (action === "export") {
         const trail = await TrailStore.getTrail(id);
         downloadFile(`${trail.name.replace(/[^a-z0-9]+/gi, "-")}.gpx`, trailToGpx(trail), "application/gpx+xml");
@@ -665,6 +858,7 @@ async function openTrailsPanel() {
             kind: trail.kind,
             points: trail.points,
             distanceMeters: trail.distanceMeters,
+            difficulty: trail.difficulty,
           });
           alert(`Shared "${trail.name}" with ${activeGroup.name}.`);
         } catch (err) {
@@ -929,7 +1123,8 @@ function renderGroupDetailPanel() {
       <input id="chat-input" placeholder="Message the group..." style="margin-top:0;flex:1;" />
       <button class="pill-btn" id="chat-send">Send</button>
     </div>
-    <button class="primary" id="back-to-groups-btn" style="background:var(--panel);border:1px solid var(--border);margin-top:16px;">Switch Group</button>
+    <button class="primary" id="open-folders-btn" style="background:var(--panel);border:1px solid var(--accent-bright);margin-top:12px;">Trip Folders</button>
+    <button class="primary" id="back-to-groups-btn" style="background:var(--panel);border:1px solid var(--border);">Switch Group</button>
     `
   );
   const log = document.getElementById("chat-log");
@@ -951,10 +1146,110 @@ function renderGroupDetailPanel() {
   document.getElementById("chat-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") send();
   });
+  document.getElementById("open-folders-btn").addEventListener("click", openFoldersPanel);
   document.getElementById("back-to-groups-btn").addEventListener("click", () => {
     leaveActiveGroup();
     renderGroupsListPanel();
   });
+}
+
+// ---------- Trip folders ----------
+async function openFoldersPanel() {
+  let folders = [];
+  try {
+    folders = await GroupBackend.listFolders(activeGroup.id);
+  } catch (err) {
+    console.warn("Could not load folders:", err);
+  }
+  const rows = folders
+    .map(
+      (f) => `<div class="region-item" data-id="${f.id}">
+        <div><div>${escHtml(f.name)}</div><small>${escHtml(f.description || "")}</small></div>
+        <button class="pill-btn" data-action="open">Open</button>
+      </div>`
+    )
+    .join("");
+
+  openPanel(
+    "Trip Folders",
+    `
+    ${rows || '<p style="color:var(--text-dim);font-size:13px;">No trip folders yet.</p>'}
+    <label>New folder name</label>
+    <input id="new-folder-name" placeholder="e.g. Saturday Windrock run" />
+    <label>Description (optional)</label>
+    <input id="new-folder-desc" placeholder="Meet at the gate, 9am" />
+    <button class="primary" id="create-folder-btn">Create Folder</button>
+    <button class="primary" id="back-to-group-btn" style="background:var(--panel);border:1px solid var(--border);margin-top:12px;">Back</button>
+    `
+  );
+  panelBody.querySelectorAll('.region-item button[data-action="open"]').forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.closest(".region-item").dataset.id;
+      const folder = folders.find((f) => f.id === id);
+      openFolderDetailPanel(folder);
+    });
+  });
+  document.getElementById("create-folder-btn").addEventListener("click", async () => {
+    const name = document.getElementById("new-folder-name").value.trim();
+    if (!name) return;
+    const description = document.getElementById("new-folder-desc").value.trim();
+    try {
+      await GroupBackend.createFolder(activeGroup.id, name, description);
+      openFoldersPanel();
+    } catch (err) {
+      alert("Could not create folder: " + err.message);
+    }
+  });
+  document.getElementById("back-to-group-btn").addEventListener("click", renderGroupDetailPanel);
+}
+
+async function openFolderDetailPanel(folder) {
+  const [waypoints, trails] = await Promise.all([
+    GroupBackend.listWaypoints(activeGroup.id),
+    GroupBackend.listTrails(activeGroup.id),
+  ]);
+  const inFolder = { waypoints: waypoints.filter((w) => w.folder_id === folder.id), trails: trails.filter((t) => t.folder_id === folder.id) };
+  const unassigned = { waypoints: waypoints.filter((w) => !w.folder_id), trails: trails.filter((t) => !t.folder_id) };
+
+  const wpRows = inFolder.waypoints
+    .map((w) => `<div class="trail-item"><div>📍 ${escHtml(w.name)} <small style="color:var(--text-dim);">(${CATEGORY_LABELS[w.category] || "Other"})</small></div></div>`)
+    .join("");
+  const trailRows = inFolder.trails
+    .map((t) => `<div class="trail-item"><div>🛣️ ${escHtml(t.name)} <small style="color:var(--text-dim);">${metersToMiles(t.distance_meters || 0).toFixed(1)} mi${t.difficulty ? " · " + t.difficulty + "/10" : ""}</small></div></div>`)
+    .join("");
+
+  openPanel(
+    escHtml(folder.name),
+    `
+    <p style="color:var(--text-dim);font-size:13px;">${escHtml(folder.description || "")}</p>
+    <h4 style="margin-bottom:4px;">Waypoints</h4>
+    ${wpRows || '<p style="color:var(--text-dim);font-size:12px;">None yet.</p>'}
+    ${unassigned.waypoints.length ? `
+    <select id="add-wp-select" style="width:100%;margin-top:6px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);">
+      <option value="">Add an existing shared waypoint...</option>
+      ${unassigned.waypoints.map((w) => `<option value="${w.id}">${escHtml(w.name)}</option>`).join("")}
+    </select>` : ""}
+    <h4 style="margin-bottom:4px;margin-top:14px;">Trails / Routes</h4>
+    ${trailRows || '<p style="color:var(--text-dim);font-size:12px;">None yet.</p>'}
+    ${unassigned.trails.length ? `
+    <select id="add-trail-select" style="width:100%;margin-top:6px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);">
+      <option value="">Add an existing shared trail...</option>
+      ${unassigned.trails.map((t) => `<option value="${t.id}">${escHtml(t.name)}</option>`).join("")}
+    </select>` : ""}
+    <button class="primary" id="back-to-folders-btn" style="background:var(--panel);border:1px solid var(--border);margin-top:16px;">Back to Folders</button>
+    `
+  );
+  document.getElementById("add-wp-select")?.addEventListener("change", async (e) => {
+    if (!e.target.value) return;
+    await GroupBackend.assignWaypointFolder(e.target.value, folder.id);
+    openFolderDetailPanel(folder);
+  });
+  document.getElementById("add-trail-select")?.addEventListener("change", async (e) => {
+    if (!e.target.value) return;
+    await GroupBackend.assignTrailFolder(e.target.value, folder.id);
+    openFolderDetailPanel(folder);
+  });
+  document.getElementById("back-to-folders-btn").addEventListener("click", openFoldersPanel);
 }
 
 function chatMessageEl(m) {
