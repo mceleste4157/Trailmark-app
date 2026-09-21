@@ -515,6 +515,31 @@ function escHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
+// A GPS fix requested for the photo currently being snapped — started
+// the instant the Photo button is tapped (in parallel with the camera
+// opening), not after the photo comes back. Opening the native camera
+// app can cause mobile browsers to evict/reload the page under memory
+// pressure; anything left waiting on an async result at that point is
+// lost with no error shown. Fetching the location first means there's
+// nothing left to await once the file comes back — saving is then a
+// synchronous-feeling step instead of a several-second window where the
+// whole capture can silently vanish.
+let pendingPhotoLocation = null;
+
+function requestPhotoLocation() {
+  pendingPhotoLocation = new Promise((resolve, reject) => {
+    if (!("geolocation" in navigator)) {
+      reject(new Error("Geolocation isn't available on this device."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (err) => reject(err),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+}
+
 // ---------- Toolbar wiring ----------
 const toolbarButtons = document.querySelectorAll("#toolbar button");
 toolbarButtons.forEach((btn) => {
@@ -527,6 +552,7 @@ toolbarButtons.forEach((btn) => {
       return;
     }
     if (mode === "photo") {
+      requestPhotoLocation();
       document.getElementById("photo-input").click();
       return;
     }
@@ -741,40 +767,36 @@ async function refreshPhotoMarkers() {
 // btn-photo has no separate listener of its own, matching the same
 // instant-action pattern as Start Ride.
 const photoInput = document.getElementById("photo-input");
-photoInput.addEventListener("change", (e) => {
+photoInput.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   e.target.value = "";
   if (!file) return;
-  if (!("geolocation" in navigator)) {
+  if (!pendingPhotoLocation) {
     alert("Geolocation isn't available on this device — can't tag the photo's location.");
     return;
   }
-  // A fresh one-shot fix taken right after snapping, rather than reusing
-  // whatever the map's last position update was — the camera capture
-  // itself can take a moment, so this is closer to "where you actually
-  // were when you took the photo."
-  navigator.geolocation.getCurrentPosition(
-    async (pos) => {
-      const { latitude: lat, longitude: lng } = pos.coords;
-      await PhotoStore.savePhoto({ lat, lng, note: "", blob: file });
-      await refreshPhotoMarkers();
-      // Sharing is automatic while you're signed in — same as live
-      // location — rather than a per-photo prompt breaking up the
-      // snap-and-go flow.
-      if (session) {
-        try {
-          await GroupBackend.addPhoto({ lat, lng, note: "", photoFile: file });
-          alert("Photo saved and shared with the crew.");
-        } catch (err) {
-          alert("Photo saved locally, but couldn't share it: " + err.message);
-        }
-      } else {
-        alert("Photo saved at your location.");
-      }
-    },
-    (err) => alert("Couldn't get your location for this photo: " + err.message),
-    { enableHighAccuracy: true, timeout: 10000 }
-  );
+  let lat, lng;
+  try {
+    ({ lat, lng } = await pendingPhotoLocation);
+  } catch (err) {
+    alert("Couldn't get your location for this photo: " + err.message);
+    return;
+  }
+
+  await PhotoStore.savePhoto({ lat, lng, note: "", blob: file });
+  await refreshPhotoMarkers();
+  // Sharing is automatic while you're signed in — same as live location —
+  // rather than a per-photo prompt breaking up the snap-and-go flow.
+  if (session) {
+    try {
+      await GroupBackend.addPhoto({ lat, lng, note: "", photoFile: file });
+      alert("Photo saved and shared with the crew.");
+    } catch (err) {
+      alert("Photo saved locally, but couldn't share it: " + err.message);
+    }
+  } else {
+    alert("Photo saved at your location.");
+  }
 });
 
 async function refreshGroupPhotoMarkers(rows) {
