@@ -55,41 +55,46 @@ trailmark-app/
 
 ## Getting offline map data for the southeast
 
-PMTiles files are generated from OpenStreetMap data. Two free ways to get one
-for your area:
+**Option A — the bundled GitHub Action (recommended)**
+`.github/workflows/build-region.yml` downloads a Geofabrik state extract,
+clips it to a bounding box with `osmium-tool`, and builds a `.pmtiles`
+archive with [Planetiler](https://github.com/onthegomap/planetiler) — then
+reads the archive's own header for bounds/zoom and commits both the file
+and a `regions-manifest.json` entry back to the repo. Run it from the
+repo's **Actions** tab (`Build offline map region` → **Run workflow**),
+filling in:
+- `region_name` / `region_label` — id and display name for the region
+- `geofabrik_path` — e.g. `north-america/us/georgia`, `north-america/us/florida`
+- `bbox` — `minLon,minLat,maxLon,maxLat` for the area to clip to
 
-**Option A — Protomaps' hosted builder (easiest)**
-Use https://app.protomaps.com/downloads to extract a `.pmtiles` file for a
-bounding box (e.g., a national forest, a county, or a whole state). Free,
-no signup required for small extracts. Drop the file into `data/regions/`.
+Planetiler's default profile outputs the **OpenMapTiles** schema
+(`landcover` / `landuse` / `water` / `building` / `transportation` /
+`mountain_peak` / …, with a `class` property on transportation features —
+`path`/`track` is what `activateRegion()` in `js/app.js` styles as trails).
+That's what the CI job produces and what the app is styled for.
 
-**Option B — Build your own extract (full control, still free)**
-```bash
-# Download a regional OSM extract (e.g. from Geofabrik)
-curl -O https://download.geofabrik.de/north-america/us/georgia-latest.osm.pbf
+**Option B — Protomaps' hosted builder**
+https://app.protomaps.com/downloads extracts a `.pmtiles` for a bounding
+box using a *different* schema (Protomaps basemap: `earth`/`landuse`/
+`water`/`buildings`/`roads` with a `kind` property) — `activateRegion()`
+would need restyling to match if you use this instead.
 
-# Convert to PMTiles with the free `pmtiles` + `tippecanoe` CLI tools
-tippecanoe -o georgia.pmtiles georgia-latest.osm.pbf
-```
-A plain tippecanoe extract comes out as a single flat layer, not the
-`earth` / `landuse` / `water` / `buildings` / `roads` layers `activateRegion()`
-in `js/app.js` expects — you'd restyle that function to match. Option A
-avoids this because it already outputs the Protomaps basemap schema.
-
-Either way, the app reads the `.pmtiles` file directly from
-`data/regions/` — no server-side tile hosting needed, which is what keeps
+Either way, drop the `.pmtiles` file into `data/regions/` and add an entry
+to `regions-manifest.json` (the CI workflow does this for you) — the app
+reads it directly, no server-side tile hosting needed, which is what keeps
 this free at any scale.
 
 ## Included test fixture
 
 `data/regions/firenze-test.pmtiles` (Florence, Italy; © OpenStreetMap
 contributors, ODbL) is bundled from the
-[protomaps/PMTiles](https://github.com/protomaps/PMTiles) test fixtures so
-you can verify the whole offline-map pipeline — PMTiles source, MapLibre
-vector rendering, the download/cache flow in **Offline Maps** — works
-before generating a real region for the southeast. It's already declared in
-`regions-manifest.json`; open the app, go to **Offline Maps**, tap
-**Download**, then pan to Florence (11.25, 43.77) to see it render.
+[protomaps/PMTiles](https://github.com/protomaps/PMTiles) test fixtures to
+verify the offline-map *mechanics* — PMTiles source, the download/cache
+flow in **Offline Maps**, surviving a reload with no network — independent
+of any one region. It's in the Protomaps basemap schema (see Option B
+above), not the OpenMapTiles schema real regions use, so it downloads and
+caches correctly but won't show roads/water/etc. — only real regions built
+via the GitHub Action render fully styled.
 
 ## Roadmap
 

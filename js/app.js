@@ -280,11 +280,14 @@ async function openRegionsPanel() {
   });
 }
 
-// Layer names below match the Protomaps basemap schema (the output of the
-// Protomaps builder linked in the README's "Option A" — also what
-// https://github.com/protomaps/basemaps produces). A tippecanoe extract
-// built straight from raw OSM data (README's "Option B") normally comes
-// out as a single flat layer instead and needs its own style here.
+// Layer names below match the OpenMapTiles schema — what Planetiler's
+// default profile outputs (the .github/workflows/build-region.yml CI job
+// uses this to build real regions; confirmed against an actual built
+// archive, not assumed). A Protomaps-basemap-schema archive (e.g. the
+// bundled firenze-test.pmtiles fixture, or the README's "Option A") uses
+// different layer names (earth/landuse/water/buildings/roads with a "kind"
+// property) and won't render right here — regenerate it with the CI
+// workflow to get this schema instead.
 function activateRegion(region) {
   const sourceId = `region-${region.name}`;
   if (map.getSource(sourceId)) return;
@@ -298,10 +301,10 @@ function activateRegion(region) {
     attribution: region.attribution || "",
   });
   map.addLayer({
-    id: `${sourceId}-earth`,
+    id: `${sourceId}-landcover`,
     type: "fill",
     source: sourceId,
-    "source-layer": "earth",
+    "source-layer": "landcover",
     paint: { "fill-color": "#1e293b" },
   });
   map.addLayer({
@@ -312,6 +315,13 @@ function activateRegion(region) {
     paint: { "fill-color": "#243447", "fill-opacity": 0.6 },
   });
   map.addLayer({
+    id: `${sourceId}-park`,
+    type: "fill",
+    source: sourceId,
+    "source-layer": "park",
+    paint: { "fill-color": "#14532d", "fill-opacity": 0.35 },
+  });
+  map.addLayer({
     id: `${sourceId}-water`,
     type: "fill",
     source: sourceId,
@@ -319,30 +329,53 @@ function activateRegion(region) {
     paint: { "fill-color": "#0c4a6e" },
   });
   map.addLayer({
+    id: `${sourceId}-waterway`,
+    type: "line",
+    source: sourceId,
+    "source-layer": "waterway",
+    paint: { "line-color": "#0c4a6e", "line-width": 1 },
+  });
+  map.addLayer({
     id: `${sourceId}-buildings`,
     type: "fill",
     source: sourceId,
-    "source-layer": "buildings",
+    "source-layer": "building",
     paint: { "fill-color": "#334155" },
   });
   map.addLayer({
     id: `${sourceId}-roads`,
     type: "line",
     source: sourceId,
-    "source-layer": "roads",
+    "source-layer": "transportation",
     layout: { "line-join": "round", "line-cap": "round" },
     paint: { "line-color": "#94a3b8", "line-width": 1 },
   });
   // Foot/cycle paths and tracks — the closest thing to "trails" in this
-  // schema — pulled out of the roads layer and drawn in trail-green.
+  // schema — pulled out of the transportation layer and drawn in
+  // trail-green. OpenMapTiles' "class" values for these are "path" and
+  // "track"; "subclass" narrows further (footway, cycleway, bridleway,
+  // steps, path).
   map.addLayer({
     id: `${sourceId}-trails`,
     type: "line",
     source: sourceId,
-    "source-layer": "roads",
-    filter: ["in", ["get", "kind"], ["literal", ["path", "footway", "track", "cycleway", "bridleway"]]],
+    "source-layer": "transportation",
+    filter: ["in", ["get", "class"], ["literal", ["path", "track"]]],
     layout: { "line-join": "round", "line-cap": "round" },
     paint: { "line-color": "#22c55e", "line-width": 1.5, "line-dasharray": [2, 1.5] },
+  });
+  map.addLayer({
+    id: `${sourceId}-peaks`,
+    type: "symbol",
+    source: sourceId,
+    "source-layer": "mountain_peak",
+    layout: {
+      "text-field": ["get", "name"],
+      "text-size": 11,
+      "text-offset": [0, 0.8],
+      "text-anchor": "top",
+    },
+    paint: { "text-color": "#e2e8f0", "text-halo-color": "#0f172a", "text-halo-width": 1 },
   });
   if (region.bounds) {
     map.fitBounds(region.bounds, { padding: 20 });
