@@ -1,0 +1,14 @@
+{
+  "comment": "List the offline regions you've generated (see README: Getting offline map data). Each 'file' must exist in data/regions/ as a .pmtiles file. Add an entry here after you drop a new file in.",
+  "regions": [
+    {
+      "name": "example-region",
+      "label": "Example Region (replace me)",
+      "file": "example-region.pmtiles",
+      "center": [-84.39, 33.75],
+      "bounds": [-85.6, 30.4, -80.8, 35.0],
+      "minZoom": 5,
+      "maxZoom": 14
+    }
+  ]
+}

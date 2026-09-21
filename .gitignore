@@ -1,0 +1,10 @@
+# Offline map tile archives (large binary files, fetched separately per README)
+data/regions/*.pmtiles
+
+# OS / editor cruft
+.DS_Store
+*.swp
+
+# Local env / secrets (for future Supabase sync)
+.env
+.env.local

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Trailmark</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+<meta name="theme-color" content="#166534" />
+
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/pmtiles@3.0.7/dist/pmtiles.js"></script>
+<script src="https://unpkg.com/dexie@4.0.8/dist/dexie.js"></script>
+
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div id="map"></div>
+
+<header id="topbar">
+  <span id="app-title">Trailmark</span>
+  <span id="status-pill" class="offline">checking…</span>
+</header>
+
+<nav id="toolbar">
+  <button id="btn-record" data-mode="record" title="Record a trail">Record</button>
+  <button id="btn-waypoint" data-mode="waypoint" title="Drop a waypoint">Waypoint</button>
+  <button id="btn-regions" data-mode="regions" title="Manage offline regions">Offline Maps</button>
+  <button id="btn-trails" data-mode="trails" title="View saved trails">My Trails</button>
+</nav>
+
+<div id="panel" class="hidden">
+  <div id="panel-header">
+    <span id="panel-title"></span>
+    <button id="panel-close" aria-label="Close">&times;</button>
+  </div>
+  <div id="panel-body"></div>
+</div>
+
+<div id="recording-hud" class="hidden">
+  <span id="recording-dot"></span>
+  <span id="recording-time">00:00</span>
+  <span id="recording-dist">0.00 mi</span>
+  <button id="btn-stop-recording">Stop &amp; Save</button>
+</div>
+
+<script src="js/db.js"></script>
+<script src="js/gps.js"></script>
+<script src="js/offline-regions.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
