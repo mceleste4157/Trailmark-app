@@ -1,6 +1,12 @@
 {
-  "current": "1.09",
+  "current": "1.10",
   "history": [
+    {
+      "version": "1.10",
+      "date": "2026-09-21",
+      "summary": "Fix waypoints dropping at map center instead of GPS; add edit/move/delete",
+      "commit": "038382a"
+    },
     {
       "version": "1.09",
       "date": "2026-09-21",
