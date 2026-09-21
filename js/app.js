@@ -96,6 +96,46 @@ function hideLocateBanner() {
 }
 
 geolocateControl.on("geolocate", hideLocateBanner);
+
+// ---------- Live stats HUD (speed / heading / elevation) ----------
+// Piggybacks on the GeolocateControl's own continuous, high-accuracy
+// position stream (it keeps watching after the first trigger() since
+// trackUserLocation is on) instead of opening a second GPS watch.
+const statsHud = document.getElementById("stats-hud");
+const statSpeedEl = document.getElementById("stat-speed");
+const statHeadingEl = document.getElementById("stat-heading");
+const statHeadingArrowEl = document.getElementById("stat-heading-arrow");
+const statElevationEl = document.getElementById("stat-elevation");
+
+const COMPASS_POINTS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+function compassLabel(deg) {
+  return COMPASS_POINTS[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
+}
+
+function updateStatsHud(position) {
+  statsHud.classList.remove("hidden");
+  const { speed, heading, altitude } = position.coords;
+
+  statSpeedEl.textContent = typeof speed === "number" && isFinite(speed) && speed >= 0 ? Math.round(speed * 2.23694) : "--";
+
+  if (typeof heading === "number" && isFinite(heading)) {
+    statHeadingEl.textContent = compassLabel(heading);
+    statHeadingArrowEl.style.transform = `rotate(${heading}deg)`;
+    statHeadingArrowEl.classList.remove("dim");
+  } else {
+    statHeadingEl.textContent = "--";
+    statHeadingArrowEl.classList.add("dim");
+  }
+
+  // Device-reported GPS altitude only — the free AWS terrain tiles used
+  // for the hillshade overlay have no CORS headers, so their elevation
+  // data can be drawn on the map but not read back as a number in JS.
+  // Altitude support varies a lot by device/browser, hence the "--".
+  statElevationEl.textContent = typeof altitude === "number" && isFinite(altitude) ? Math.round(altitude * 3.28084) : "--";
+}
+
+geolocateControl.on("geolocate", updateStatsHud);
+
 geolocateControl.on("error", (err) => {
   locateBanner.textContent =
     err.code === 1 // PERMISSION_DENIED

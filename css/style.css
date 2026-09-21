@@ -290,10 +290,58 @@ html, body {
   font-family: inherit;
 }
 
+#stats-hud {
+  position: absolute;
+  z-index: 12;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(17, 24, 39, 0.85);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+#stats-hud.hidden { display: none; }
+
+#stats-hud .stat {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+#stats-hud .stat-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+#stats-hud .stat-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+#stats-hud .stat-arrow {
+  display: inline-block;
+  color: var(--accent-bright);
+  font-size: 14px;
+  transition: transform 0.3s ease;
+}
+
+#stats-hud .stat-arrow.dim {
+  color: var(--text-dim);
+}
+
 #recording-hud {
   position: absolute;
   z-index: 15;
-  top: 56px;
+  top: 96px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -311,7 +359,7 @@ html, body {
 #planning-hud {
   position: absolute;
   z-index: 15;
-  top: 56px;
+  top: 96px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
