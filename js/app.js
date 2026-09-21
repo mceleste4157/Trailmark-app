@@ -1113,15 +1113,27 @@ document.getElementById("btn-planning-finish").addEventListener("click", async (
 // tile host — reads whatever URL that style.json actually specifies, so
 // it adapts automatically if the provider ever changes it.
 let cachedVectorTileTemplate = null;
+// Throws a specific, distinguishable reason instead of a generic "offline"
+// message — a weak-signal fetch failure, an HTTP error from the basemap
+// server, and a style that genuinely has no vector source are three very
+// different problems, and lumping them into one message makes a real bug
+// indistinguishable from "you just need signal."
 async function getOnlineVectorTileTemplate() {
   if (cachedVectorTileTemplate) return cachedVectorTileTemplate;
+  let res;
+  try {
+    res = await fetch(ONLINE_STYLE_URL, { cache: "no-store" });
+  } catch (err) {
+    throw new Error(`Couldn't reach the basemap server (${err.message}). Check your connection and try again.`);
+  }
+  if (!res.ok) {
+    throw new Error(`Basemap server returned an error (HTTP ${res.status}). Try again in a moment.`);
+  }
   let style;
   try {
-    const res = await fetch(ONLINE_STYLE_URL);
-    if (!res.ok) return null;
     style = await res.json();
-  } catch {
-    return null; // network unreachable — caller shows a clear message
+  } catch (err) {
+    throw new Error("Basemap server returned an unexpected response. Try again in a moment.");
   }
   for (const source of Object.values(style.sources || {})) {
     if (source.type === "vector" && source.tiles && source.tiles.length) {
@@ -1129,7 +1141,7 @@ async function getOnlineVectorTileTemplate() {
       return cachedVectorTileTemplate;
     }
   }
-  return null;
+  throw new Error("The basemap style loaded but has no trail/road data source — this looks like a provider-side issue, not a connectivity one.");
 }
 
 function lonLatToTileXY(lon, lat, z) {
@@ -1155,8 +1167,7 @@ function tilesForBounds(bounds, minZoom, maxZoom) {
 }
 
 async function downloadCustomArea(name, bounds, minZoom, maxZoom, onProgress) {
-  const template = await getOnlineVectorTileTemplate();
-  if (!template) throw new Error("Could not load the online basemap's style — go online first, then try again.");
+  const template = await getOnlineVectorTileTemplate(); // throws its own specific message on failure
   const tiles = tilesForBounds(bounds, minZoom, maxZoom);
   let done = 0;
   const CONCURRENCY = 8;
