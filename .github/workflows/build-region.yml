@@ -78,4 +78,11 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f "data/regions/${{ inputs.region_name }}.pmtiles" data/regions/regions-manifest.json
           git commit -m "Add offline region: ${{ inputs.region_label }}"
-          git push
+          # main can move between checkout and here (another push, or another
+          # region build finishing first) — rebase onto the current tip and
+          # retry a few times rather than failing on a stale non-fast-forward.
+          for i in 1 2 3 4 5; do
+            git fetch origin main
+            git rebase origin/main && git push origin HEAD:main && break
+            sleep $((i * 5))
+          done
