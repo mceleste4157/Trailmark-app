@@ -1,6 +1,12 @@
 {
-  "current": "1.06",
+  "current": "1.07",
   "history": [
+    {
+      "version": "1.07",
+      "date": "2026-09-21",
+      "summary": "Share geotagged photos with your group",
+      "commit": "5141913"
+    },
     {
       "version": "1.06",
       "date": "2026-09-21",
