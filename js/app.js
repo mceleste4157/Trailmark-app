@@ -276,37 +276,78 @@ map.on("style.load", () => {
 // the app is open (throttled to conserve battery/storage), building up a
 // permanent visual history across every visit — not one named session you
 // start and stop. Local-only for now (not shared with the crew).
-const BREADCRUMB_SOURCE_ID = "breadcrumb-trail";
+//
+// Rendered as one line per calendar day (each gets its own source/layer,
+// cycling through BREADCRUMB_COLORS in chronological order) rather than
+// one continuous line, so a multi-day trip shows which day is which at a
+// glance instead of everything blending into a single color.
+const BREADCRUMB_SOURCE_PREFIX = "breadcrumb-trail-";
+const BREADCRUMB_COLORS = ["#ec4899", "#06b6d4", "#f97316", "#84cc16", "#a855f7", "#eab308"];
 let breadcrumbPoints = [];
 let breadcrumbWatchId = null;
+let activeBreadcrumbSourceIds = new Set();
 
-function breadcrumbGeoJSON() {
-  return {
-    type: "Feature",
-    geometry: { type: "LineString", coordinates: breadcrumbPoints.map((p) => [p.lng, p.lat]) },
-  };
+function breadcrumbDayKey(t) {
+  const d = new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Chronological order (breadcrumbPoints is loaded/appended in time order),
+// so day N always gets the same color across reloads as long as the same
+// days of history exist — colors don't shuffle around session to session.
+function breadcrumbPointsByDay() {
+  const byDay = new Map();
+  for (const p of breadcrumbPoints) {
+    const key = breadcrumbDayKey(p.t);
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(p);
+  }
+  return byDay;
 }
 
 function drawBreadcrumbLine() {
-  if (breadcrumbPoints.length < 2) return;
-  if (map.getSource(BREADCRUMB_SOURCE_ID)) {
-    map.getSource(BREADCRUMB_SOURCE_ID).setData(breadcrumbGeoJSON());
-    return;
-  }
-  map.addSource(BREADCRUMB_SOURCE_ID, { type: "geojson", data: breadcrumbGeoJSON() });
-  // Insert below waypoint/trail markers but that's automatic (markers are
-  // DOM elements, not style layers) — just add normally.
-  // Bright pink/magenta at near-full opacity and a heavier width — the
-  // previous pale gray at 50% opacity blended into the dark basemap and
-  // was hard to spot. Not used by any other layer, so it reads clearly
-  // as its own thing against the greens/blues/yellows everywhere else.
-  map.addLayer({
-    id: BREADCRUMB_SOURCE_ID,
-    type: "line",
-    source: BREADCRUMB_SOURCE_ID,
-    layout: { "line-join": "round", "line-cap": "round" },
-    paint: { "line-color": "#ec4899", "line-width": 3.5, "line-opacity": 0.9, "line-dasharray": [2, 1.5] },
+  const byDay = breadcrumbPointsByDay();
+  const nextIds = new Set();
+
+  Array.from(byDay.entries()).forEach(([dayKey, points], i) => {
+    if (points.length < 2) return; // need at least 2 points to draw a line
+    const sourceId = BREADCRUMB_SOURCE_PREFIX + dayKey;
+    nextIds.add(sourceId);
+    const geojson = {
+      type: "Feature",
+      geometry: { type: "LineString", coordinates: points.map((p) => [p.lng, p.lat]) },
+    };
+    if (map.getSource(sourceId)) {
+      map.getSource(sourceId).setData(geojson);
+      return;
+    }
+    // Bright, saturated colors at near-full opacity and a heavier width —
+    // a previous pale gray at 50% opacity blended into the dark basemap
+    // and was hard to spot.
+    map.addSource(sourceId, { type: "geojson", data: geojson });
+    map.addLayer({
+      id: sourceId,
+      type: "line",
+      source: sourceId,
+      layout: { "line-join": "round", "line-cap": "round" },
+      paint: {
+        "line-color": BREADCRUMB_COLORS[i % BREADCRUMB_COLORS.length],
+        "line-width": 3.5,
+        "line-opacity": 0.9,
+        "line-dasharray": [2, 1.5],
+      },
+    });
   });
+
+  // Drop any day-layers no longer represented (after clearing, or after a
+  // style change wiped every custom source/layer out from under us).
+  activeBreadcrumbSourceIds.forEach((sourceId) => {
+    if (!nextIds.has(sourceId)) {
+      if (map.getLayer(sourceId)) map.removeLayer(sourceId);
+      if (map.getSource(sourceId)) map.removeSource(sourceId);
+    }
+  });
+  activeBreadcrumbSourceIds = nextIds;
 }
 
 function startBreadcrumbTracking() {
@@ -341,8 +382,11 @@ async function initBreadcrumbTrail() {
 async function clearBreadcrumbTrail() {
   await BreadcrumbStore.clear();
   breadcrumbPoints = [];
-  if (map.getLayer(BREADCRUMB_SOURCE_ID)) map.removeLayer(BREADCRUMB_SOURCE_ID);
-  if (map.getSource(BREADCRUMB_SOURCE_ID)) map.removeSource(BREADCRUMB_SOURCE_ID);
+  activeBreadcrumbSourceIds.forEach((sourceId) => {
+    if (map.getLayer(sourceId)) map.removeLayer(sourceId);
+    if (map.getSource(sourceId)) map.removeSource(sourceId);
+  });
+  activeBreadcrumbSourceIds.clear();
 }
 
 // ---------- Terrain hillshade (elevation relief) ----------
@@ -1286,6 +1330,14 @@ function difficultyLabel(d) {
 async function openTrailsPanel() {
   const trails = await TrailStore.listTrails();
   const breadcrumbCount = await BreadcrumbStore.count();
+  const breadcrumbDays = Array.from(breadcrumbPointsByDay().keys());
+  const breadcrumbLegend = breadcrumbDays
+    .map((dayKey, i) => {
+      const color = BREADCRUMB_COLORS[i % BREADCRUMB_COLORS.length];
+      const label = new Date(dayKey + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      return `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;"><span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;"></span>${escHtml(label)}</span>`;
+    })
+    .join("");
   const rows = trails
     .map(
       (t) => `
@@ -1322,6 +1374,7 @@ async function openTrailsPanel() {
       <div><div>Breadcrumb trail</div><small>${breadcrumbCount} points logged passively — everywhere you've been, not a named trail</small></div>
       <button class="pill-btn danger" id="clear-breadcrumb-btn">Clear</button>
     </div>
+    ${breadcrumbLegend ? `<div style="padding:6px 0 2px;font-size:12px;color:var(--text-dim);">${breadcrumbLegend}</div>` : ""}
     ${rows || "<p>No saved trails yet. Tap Record to track one.</p>"}
     `
   );
