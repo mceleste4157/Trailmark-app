@@ -157,12 +157,16 @@ function drawBreadcrumbLine() {
   map.addSource(BREADCRUMB_SOURCE_ID, { type: "geojson", data: breadcrumbGeoJSON() });
   // Insert below waypoint/trail markers but that's automatic (markers are
   // DOM elements, not style layers) — just add normally.
+  // Bright pink/magenta at near-full opacity and a heavier width — the
+  // previous pale gray at 50% opacity blended into the dark basemap and
+  // was hard to spot. Not used by any other layer, so it reads clearly
+  // as its own thing against the greens/blues/yellows everywhere else.
   map.addLayer({
     id: BREADCRUMB_SOURCE_ID,
     type: "line",
     source: BREADCRUMB_SOURCE_ID,
     layout: { "line-join": "round", "line-cap": "round" },
-    paint: { "line-color": "#e2e8f0", "line-width": 2, "line-opacity": 0.5, "line-dasharray": [1, 2] },
+    paint: { "line-color": "#ec4899", "line-width": 3.5, "line-opacity": 0.9, "line-dasharray": [2, 1.5] },
   });
 }
 
@@ -492,7 +496,7 @@ function drawLiveTrail(points) {
 
 function openRecordPanel() {
   if (GpsRecorder.isRecording()) {
-    openPanel("Recording in progress", `<p>A trail is already being recorded. Use the Stop &amp; Save button on the map.</p>`);
+    openPanel("Ride in progress", `<p>You're already tracking a ride. Use the Stop &amp; Save button on the map.</p>`);
     return;
   }
   if (planningRoute) {
@@ -500,12 +504,12 @@ function openRecordPanel() {
     return;
   }
   openPanel(
-    "Record or Plan a Trail",
+    "Start a Trail Ride",
     `
     <p style="color:var(--text-dim);font-size:13px;">Tracks your GPS position as you drive. Works fully offline — recording only needs the device's GPS, not the network.</p>
     <label>Trail name</label>
     <input id="rec-name" placeholder="e.g. Fire Road 42" />
-    <button class="primary" id="rec-start">Start Recording (GPS)</button>
+    <button class="primary" id="rec-start">Start Trail Ride</button>
     <p style="color:var(--text-dim);font-size:13px;margin-top:14px;">Or lay out a route ahead of time by tapping points on the map — useful for planning before you head out.</p>
     <button class="primary" id="rec-plan" style="background:var(--panel);border:1px solid var(--accent-bright);">Plan a Route (tap map)</button>
     `
