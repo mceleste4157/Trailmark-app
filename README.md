@@ -71,10 +71,25 @@ curl -O https://download.geofabrik.de/north-america/us/georgia-latest.osm.pbf
 # Convert to PMTiles with the free `pmtiles` + `tippecanoe` CLI tools
 tippecanoe -o georgia.pmtiles georgia-latest.osm.pbf
 ```
+A plain tippecanoe extract comes out as a single flat layer, not the
+`earth` / `landuse` / `water` / `buildings` / `roads` layers `activateRegion()`
+in `js/app.js` expects — you'd restyle that function to match. Option A
+avoids this because it already outputs the Protomaps basemap schema.
 
 Either way, the app reads the `.pmtiles` file directly from
 `data/regions/` — no server-side tile hosting needed, which is what keeps
 this free at any scale.
+
+## Included test fixture
+
+`data/regions/firenze-test.pmtiles` (Florence, Italy; © OpenStreetMap
+contributors, ODbL) is bundled from the
+[protomaps/PMTiles](https://github.com/protomaps/PMTiles) test fixtures so
+you can verify the whole offline-map pipeline — PMTiles source, MapLibre
+vector rendering, the download/cache flow in **Offline Maps** — works
+before generating a real region for the southeast. It's already declared in
+`regions-manifest.json`; open the app, go to **Offline Maps**, tap
+**Download**, then pan to Florence (11.25, 43.77) to see it render.
 
 ## Roadmap
 

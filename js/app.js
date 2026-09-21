@@ -1,3 +1,5 @@
+import * as maplibregl from "../vendor/maplibre-gl/maplibre-gl.mjs";
+
 // Register PMTiles as a MapLibre protocol so `pmtiles://...` sources work.
 const pmtilesProtocol = new pmtiles.Protocol();
 maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile);
@@ -278,33 +280,69 @@ async function openRegionsPanel() {
   });
 }
 
+// Layer names below match the Protomaps basemap schema (the output of the
+// Protomaps builder linked in the README's "Option A" — also what
+// https://github.com/protomaps/basemaps produces). A tippecanoe extract
+// built straight from raw OSM data (README's "Option B") normally comes
+// out as a single flat layer instead and needs its own style here.
 function activateRegion(region) {
   const sourceId = `region-${region.name}`;
   if (map.getSource(sourceId)) return;
+
+  const cachedSource = OfflineRegions.getSource(region);
+  pmtilesProtocol.add(new pmtiles.PMTiles(cachedSource));
+
   map.addSource(sourceId, {
     type: "vector",
-    url: OfflineRegions.pmtilesUrl(region),
+    url: `pmtiles://${cachedSource.getKey()}`,
+    attribution: region.attribution || "",
   });
   map.addLayer({
-    id: `${sourceId}-fill`,
+    id: `${sourceId}-earth`,
+    type: "fill",
+    source: sourceId,
+    "source-layer": "earth",
+    paint: { "fill-color": "#1e293b" },
+  });
+  map.addLayer({
+    id: `${sourceId}-landuse`,
     type: "fill",
     source: sourceId,
     "source-layer": "landuse",
-    paint: { "fill-color": "#1e293b" },
+    paint: { "fill-color": "#243447", "fill-opacity": 0.6 },
+  });
+  map.addLayer({
+    id: `${sourceId}-water`,
+    type: "fill",
+    source: sourceId,
+    "source-layer": "water",
+    paint: { "fill-color": "#0c4a6e" },
+  });
+  map.addLayer({
+    id: `${sourceId}-buildings`,
+    type: "fill",
+    source: sourceId,
+    "source-layer": "buildings",
+    paint: { "fill-color": "#334155" },
   });
   map.addLayer({
     id: `${sourceId}-roads`,
     type: "line",
     source: sourceId,
     "source-layer": "roads",
-    paint: { "line-color": "#475569", "line-width": 1 },
+    layout: { "line-join": "round", "line-cap": "round" },
+    paint: { "line-color": "#94a3b8", "line-width": 1 },
   });
+  // Foot/cycle paths and tracks — the closest thing to "trails" in this
+  // schema — pulled out of the roads layer and drawn in trail-green.
   map.addLayer({
-    id: `${sourceId}-paths`,
+    id: `${sourceId}-trails`,
     type: "line",
     source: sourceId,
-    "source-layer": "paths",
-    paint: { "line-color": "#166534", "line-width": 2 },
+    "source-layer": "roads",
+    filter: ["in", ["get", "kind"], ["literal", ["path", "footway", "track", "cycleway", "bridleway"]]],
+    layout: { "line-join": "round", "line-cap": "round" },
+    paint: { "line-color": "#22c55e", "line-width": 1.5, "line-dasharray": [2, 1.5] },
   });
   if (region.bounds) {
     map.fitBounds(region.bounds, { padding: 20 });

@@ -8,10 +8,11 @@
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
 <meta name="theme-color" content="#166534" />
 
-<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script src="https://unpkg.com/pmtiles@3.0.7/dist/pmtiles.js"></script>
-<script src="https://unpkg.com/dexie@4.0.8/dist/dexie.js"></script>
+<!-- Vendored locally (not CDN) so the service worker can cache these for
+     offline use — see vendor/README.md for versions and how to update. -->
+<link href="vendor/maplibre-gl/maplibre-gl.css" rel="stylesheet" />
+<script src="vendor/pmtiles/pmtiles.js"></script>
+<script src="vendor/dexie/dexie.js"></script>
 
 <link rel="stylesheet" href="css/style.css" />
 </head>
@@ -49,6 +50,6 @@
 <script src="js/db.js"></script>
 <script src="js/gps.js"></script>
 <script src="js/offline-regions.js"></script>
-<script src="js/app.js"></script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>
