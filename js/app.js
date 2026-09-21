@@ -71,9 +71,30 @@ const geolocateControl = new maplibregl.GeolocateControl({
   showUserHeading: true,
 });
 map.addControl(geolocateControl, "bottom-right");
-// Show the "you are here" dot immediately instead of waiting for the
-// user to tap the control — trigger() both requests permission and
-// starts tracking (trackUserLocation: true keeps it live afterward).
+
+// Browsers silently suppress a location permission prompt that isn't
+// triggered by a direct user gesture (confirmed in practice: calling
+// trigger() on map load showed no prompt at all, no error, nothing —
+// a "drive-by prompt" protection). So: try the auto-trigger anyway
+// (harmless, works on browsers that allow it), but always show a
+// tappable banner as the reliable path, and surface real errors
+// instead of failing silently.
+const locateBanner = document.getElementById("locate-banner");
+
+function hideLocateBanner() {
+  locateBanner.classList.add("hidden");
+}
+
+geolocateControl.on("geolocate", hideLocateBanner);
+geolocateControl.on("error", (err) => {
+  locateBanner.textContent =
+    err.code === 1 // PERMISSION_DENIED
+      ? "Location access is blocked for this site — enable it in your browser's site settings, then tap here to retry."
+      : "Couldn't get your location — tap here to retry.";
+  locateBanner.classList.remove("hidden");
+});
+
+locateBanner.addEventListener("click", () => geolocateControl.trigger());
 map.on("load", () => geolocateControl.trigger());
 
 // ---------- Basemap toggle (streets / satellite) ----------
