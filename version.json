@@ -1,6 +1,12 @@
 {
-  "current": "1.07",
+  "current": "1.08",
   "history": [
+    {
+      "version": "1.08",
+      "date": "2026-09-21",
+      "summary": "Remove prebuilt offline regions in favor of \"Download This Area\"",
+      "commit": "e10d989"
+    },
     {
       "version": "1.07",
       "date": "2026-09-21",
