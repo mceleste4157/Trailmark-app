@@ -55,8 +55,14 @@ const map = new maplibregl.Map({
   style: usingOnlineBasemap ? SATELLITE_STYLE : OFFLINE_FALLBACK_STYLE,
   center: [-84.39, 33.75], // roughly central southeast (Atlanta area)
   zoom: 6,
-  attributionControl: true,
+  // The default (non-compact) attribution control renders a full-width
+  // text bar pinned to the bottom of the map, which sat directly behind
+  // our custom #toolbar and showed through its gaps/translucent edges —
+  // added explicitly below as a compact icon instead, out of the
+  // toolbar's way.
+  attributionControl: false,
 });
+map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
 // If the online style URL itself fails to load (host down, no real
 // connectivity despite navigator.onLine), fall back rather than leaving
 // the map stuck mid-load with no explanation. Satellite imagery has no
@@ -112,6 +118,21 @@ function compassLabel(deg) {
   return COMPASS_POINTS[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
 }
 
+// North-up (default) vs. track-up (map rotates so your current heading
+// always points to the top of the screen, like onX/most nav apps).
+const btnOrientation = document.getElementById("btn-orientation");
+let orientationMode = "north"; // "north" | "track"
+
+btnOrientation.addEventListener("click", () => {
+  orientationMode = orientationMode === "north" ? "track" : "north";
+  btnOrientation.classList.toggle("active", orientationMode === "track");
+  btnOrientation.title =
+    orientationMode === "track"
+      ? "Track-up: map rotates to your direction of travel. Tap for North-up."
+      : "North-up. Tap for track-up (rotates map to your direction of travel).";
+  if (orientationMode === "north") map.easeTo({ bearing: 0, duration: 300 });
+});
+
 function updateStatsHud(position) {
   statsHud.classList.remove("hidden");
   const { speed, heading, altitude } = position.coords;
@@ -120,8 +141,16 @@ function updateStatsHud(position) {
 
   if (typeof heading === "number" && isFinite(heading)) {
     statHeadingEl.textContent = compassLabel(heading);
-    statHeadingArrowEl.style.transform = `rotate(${heading}deg)`;
     statHeadingArrowEl.classList.remove("dim");
+    if (orientationMode === "track") {
+      // The map itself now rotates to match your heading, so "up" on
+      // screen already means "the way you're going" — the arrow just
+      // points straight up rather than duplicating that rotation.
+      statHeadingArrowEl.style.transform = "rotate(0deg)";
+      map.easeTo({ bearing: heading, duration: 300 });
+    } else {
+      statHeadingArrowEl.style.transform = `rotate(${heading}deg)`;
+    }
   } else {
     statHeadingEl.textContent = "--";
     statHeadingArrowEl.classList.add("dim");
@@ -432,10 +461,19 @@ function escHtml(str) {
 const toolbarButtons = document.querySelectorAll("#toolbar button");
 toolbarButtons.forEach((btn) => {
   btn.addEventListener("click", () => {
+    const mode = btn.dataset.mode;
+    // Start Ride is an instant action (no panel), so it doesn't get the
+    // toolbar's "active" panel-mode styling the other buttons use.
+    if (mode === "record") {
+      startRecordingNow();
+      return;
+    }
+    if (mode === "photo") {
+      document.getElementById("photo-input").click();
+      return;
+    }
     toolbarButtons.forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    const mode = btn.dataset.mode;
-    if (mode === "record") openRecordPanel();
     if (mode === "waypoint") openWaypointPanel();
     if (mode === "regions") openRegionsPanel();
     if (mode === "trails") openTrailsPanel();
@@ -486,6 +524,89 @@ async function refreshWaypointMarkers() {
     activeWaypointMarkers.push(marker);
   });
 }
+
+// ---------- Photos (snap a geotagged picture) ----------
+let activePhotoMarkers = [];
+
+function buildPhotoPopupContent(photo, objectUrl) {
+  const container = document.createElement("div");
+  container.style.maxWidth = "220px";
+
+  const img = document.createElement("img");
+  img.src = objectUrl;
+  img.alt = "Trail photo";
+  img.style.cssText = "width:100%;border-radius:8px;display:block;";
+  container.appendChild(img);
+
+  if (photo.note) {
+    const note = document.createElement("div");
+    note.style.cssText = "font-size:12px;margin-top:6px;";
+    note.textContent = photo.note;
+    container.appendChild(note);
+  }
+
+  const date = document.createElement("div");
+  date.style.cssText = "font-size:11px;color:#9ca3af;margin-top:4px;";
+  date.textContent = new Date(photo.createdAt).toLocaleString();
+  container.appendChild(date);
+
+  const delBtn = document.createElement("button");
+  delBtn.textContent = "Delete";
+  delBtn.style.cssText =
+    "margin-top:8px;width:100%;padding:6px;background:#dc2626;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600;";
+  delBtn.addEventListener("click", async () => {
+    if (!confirm("Delete this photo?")) return;
+    await PhotoStore.deletePhoto(photo.id);
+    await refreshPhotoMarkers();
+  });
+  container.appendChild(delBtn);
+
+  return container;
+}
+
+async function refreshPhotoMarkers() {
+  activePhotoMarkers.forEach((m) => m.remove());
+  activePhotoMarkers = [];
+  const photos = await PhotoStore.listPhotos();
+  photos.forEach((photo) => {
+    const el = document.createElement("div");
+    el.textContent = "📷";
+    el.style.cssText = "font-size:20px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.7));cursor:pointer;";
+    const objectUrl = URL.createObjectURL(photo.blob);
+    const marker = new maplibregl.Marker({ element: el })
+      .setLngLat([photo.lng, photo.lat])
+      .setPopup(new maplibregl.Popup().setDOMContent(buildPhotoPopupContent(photo, objectUrl)))
+      .addTo(map);
+    activePhotoMarkers.push(marker);
+  });
+}
+
+// The toolbar's click dispatcher (above) opens this file input directly —
+// btn-photo has no separate listener of its own, matching the same
+// instant-action pattern as Start Ride.
+const photoInput = document.getElementById("photo-input");
+photoInput.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  if (!("geolocation" in navigator)) {
+    alert("Geolocation isn't available on this device — can't tag the photo's location.");
+    return;
+  }
+  // A fresh one-shot fix taken right after snapping, rather than reusing
+  // whatever the map's last position update was — the camera capture
+  // itself can take a moment, so this is closer to "where you actually
+  // were when you took the photo."
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      await PhotoStore.savePhoto({ lat: pos.coords.latitude, lng: pos.coords.longitude, note: "", blob: file });
+      await refreshPhotoMarkers();
+      alert("Photo saved at your location.");
+    },
+    (err) => alert("Couldn't get your location for this photo: " + err.message),
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+});
 
 function openWaypointPanel() {
   openPanel(
@@ -578,7 +699,10 @@ function drawLiveTrail(points) {
   }
 }
 
-function openRecordPanel() {
+// One tap starts recording immediately — no name prompt in the way while
+// you're about to start driving. Name it afterward (defaults to today's
+// date, renameable from My Trails).
+function startRecordingNow() {
   if (GpsRecorder.isRecording()) {
     openPanel("Ride in progress", `<p>You're already tracking a ride. Use the Stop &amp; Save button on the map.</p>`);
     return;
@@ -587,41 +711,21 @@ function openRecordPanel() {
     openPanel("Planning in progress", `<p>You're already planning a route. Use the Finish &amp; Save or Cancel button on the map.</p>`);
     return;
   }
-  openPanel(
-    "Start a Trail Ride",
-    `
-    <p style="color:var(--text-dim);font-size:13px;">Tracks your GPS position as you drive. Works fully offline — recording only needs the device's GPS, not the network.</p>
-    <label>Trail name</label>
-    <input id="rec-name" placeholder="e.g. Fire Road 42" />
-    <button class="primary" id="rec-start">Start Trail Ride</button>
-    <p style="color:var(--text-dim);font-size:13px;margin-top:14px;">Or lay out a route ahead of time by tapping points on the map — useful for planning before you head out.</p>
-    <button class="primary" id="rec-plan" style="background:var(--panel);border:1px solid var(--accent-bright);">Plan a Route (tap map)</button>
-    `
-  );
-  document.getElementById("rec-plan").addEventListener("click", () => {
-    const name = document.getElementById("rec-name").value.trim() || "Unnamed route";
-    startPlanningRoute(name);
-    closePanel();
-  });
-  document.getElementById("rec-start").addEventListener("click", () => {
-    const name = document.getElementById("rec-name").value.trim() || "Unnamed trail";
-    try {
-      GpsRecorder.start(({ points, distanceMeters }) => {
-        drawLiveTrail(points);
-        recordingDist.textContent = `${metersToMiles(distanceMeters).toFixed(2)} mi`;
-      });
-    } catch (e) {
-      alert(e.message);
-      return;
-    }
-    recordingStartedAt = Date.now();
-    recordingHud.classList.remove("hidden");
-    recordingTimer = setInterval(() => {
-      recordingTime.textContent = formatElapsed(Date.now() - recordingStartedAt);
-    }, 1000);
-    window.__pendingTrailName = name;
-    closePanel();
-  });
+  try {
+    GpsRecorder.start(({ points, distanceMeters }) => {
+      drawLiveTrail(points);
+      recordingDist.textContent = `${metersToMiles(distanceMeters).toFixed(2)} mi`;
+    });
+  } catch (e) {
+    alert(e.message);
+    return;
+  }
+  recordingStartedAt = Date.now();
+  recordingHud.classList.remove("hidden");
+  recordingTimer = setInterval(() => {
+    recordingTime.textContent = formatElapsed(Date.now() - recordingStartedAt);
+  }, 1000);
+  window.__pendingTrailName = `Ride – ${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
 }
 
 document.getElementById("btn-stop-recording").addEventListener("click", async () => {
@@ -1163,6 +1267,7 @@ async function openTrailsPanel() {
         </div>
         <div>
           <button class="pill-btn" data-action="show">Show</button>
+          <button class="pill-btn" data-action="rename">Rename</button>
           <button class="pill-btn" data-action="rate">Rate</button>
           <button class="pill-btn" data-action="export">GPX</button>
           ${activeGroup ? '<button class="pill-btn" data-action="share">Share</button>' : ""}
@@ -1176,6 +1281,10 @@ async function openTrailsPanel() {
     "My Trails",
     `
     <div class="region-item">
+      <div><div>Plan a Route</div><small>Lay out a route ahead of time by tapping points on the map</small></div>
+      <button class="pill-btn" id="plan-route-btn">Plan</button>
+    </div>
+    <div class="region-item">
       <div><div>Import GPX</div><small>From onX, Gaia, AllTrails, or a GPS unit — brings in the track and any waypoints</small></div>
       <button class="pill-btn" id="import-gpx-btn">Import</button>
     </div>
@@ -1187,6 +1296,20 @@ async function openTrailsPanel() {
     ${rows || "<p>No saved trails yet. Tap Record to track one.</p>"}
     `
   );
+  document.getElementById("plan-route-btn").addEventListener("click", () => {
+    if (GpsRecorder.isRecording()) {
+      alert("You're already tracking a ride. Use the Stop & Save button on the map first.");
+      return;
+    }
+    if (planningRoute) {
+      alert("You're already planning a route. Use the Finish & Save or Cancel button on the map.");
+      return;
+    }
+    const name = prompt("Route name:", "Unnamed route");
+    if (name === null) return;
+    startPlanningRoute(name.trim() || "Unnamed route");
+    closePanel();
+  });
   document.getElementById("import-gpx-btn").addEventListener("click", () => {
     document.getElementById("import-gpx-input").click();
   });
@@ -1213,6 +1336,12 @@ async function openTrailsPanel() {
       const action = e.target.dataset.action;
       if (action === "delete") {
         await TrailStore.deleteTrail(id);
+        openTrailsPanel();
+      } else if (action === "rename") {
+        const trail = await TrailStore.getTrail(id);
+        const name = prompt("Rename trail:", trail.name);
+        if (name === null || !name.trim()) return;
+        await TrailStore.renameTrail(id, name.trim());
         openTrailsPanel();
       } else if (action === "rate") {
         const input = prompt("Technical difficulty, 1 (easy) to 10 (extreme). Leave blank to clear.");
@@ -1832,6 +1961,7 @@ if (usingOnlineBasemap) {
 }
 map.on("load", async () => {
   await refreshWaypointMarkers();
+  await refreshPhotoMarkers();
   await restoreDownloadedRegions();
   await initBreadcrumbTrail();
 });

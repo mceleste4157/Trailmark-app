@@ -37,6 +37,18 @@ db.version(3).stores({
   customAreas: "++id, &name, downloadedAt",
 });
 
+db.version(4).stores({
+  trails: "++id, name, createdAt",
+  waypoints: "++id, name, createdAt",
+  regions: "++id, &name, downloadedAt",
+  breadcrumbs: "++id, t",
+  customAreas: "++id, &name, downloadedAt",
+  // Geotagged photos — snapped via the toolbar's Photo button. The image
+  // itself is stored as a Blob (IndexedDB stores these natively, no
+  // base64 encoding needed) alongside the GPS fix taken at the same time.
+  photos: "++id, createdAt",
+});
+
 const TrailStore = {
   async saveTrail({ name, kind, points, distanceMeters, startedAt, endedAt, difficulty }) {
     return db.trails.add({
@@ -52,6 +64,9 @@ const TrailStore = {
   },
   async setDifficulty(id, difficulty) {
     return db.trails.update(id, { difficulty });
+  },
+  async renameTrail(id, name) {
+    return db.trails.update(id, { name });
   },
   async listTrails() {
     return db.trails.orderBy("createdAt").reverse().toArray();
@@ -110,6 +125,21 @@ const CustomAreaStore = {
   },
   async remove(name) {
     return db.customAreas.where("name").equals(name).delete();
+  },
+};
+
+const PhotoStore = {
+  async savePhoto({ lat, lng, note, blob }) {
+    return db.photos.add({ lat, lng, note: note || "", blob, createdAt: Date.now() });
+  },
+  async listPhotos() {
+    return db.photos.orderBy("createdAt").reverse().toArray();
+  },
+  async getPhoto(id) {
+    return db.photos.get(id);
+  },
+  async deletePhoto(id) {
+    return db.photos.delete(id);
   },
 };
 

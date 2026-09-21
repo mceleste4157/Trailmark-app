@@ -198,7 +198,11 @@ html, body {
   display: flex;
   gap: 8px;
   padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
-  background: linear-gradient(to top, rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0));
+  /* Solid behind the buttons themselves, fading only in the padding
+     above them — previously faded across the whole bar, which left it
+     only ~50% opaque right where the buttons sit, letting MapLibre's
+     attribution control bleed through in the gaps between them. */
+  background: linear-gradient(to top, rgba(15, 23, 42, 0.97) 65%, rgba(15, 23, 42, 0) 100%);
 }
 
 #toolbar button {
@@ -314,6 +318,22 @@ html, body {
   display: flex;
   align-items: baseline;
   gap: 4px;
+}
+
+#btn-orientation {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 8px;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#btn-orientation.active {
+  background: rgba(34, 197, 94, 0.18);
 }
 
 #stats-hud .stat-value {
