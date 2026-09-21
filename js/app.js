@@ -1,4 +1,5 @@
 import * as maplibregl from "../vendor/maplibre-gl/maplibre-gl.mjs";
+window.__maplibreLoaded = true; // temporary diag flag, see index.html
 
 // Register PMTiles as a MapLibre protocol so `pmtiles://...` sources work.
 const pmtilesProtocol = new pmtiles.Protocol();
@@ -32,6 +33,7 @@ map.addControl(
   }),
   "bottom-right"
 );
+window.__mapInitialized = true; // temporary diag flag, see index.html
 
 let trailSourceCounter = 0;
 let activeWaypointMarkers = [];
