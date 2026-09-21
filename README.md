@@ -7,10 +7,6 @@ alternative to onX built on open web technology.
 
 - **[MapLibre GL JS](https://maplibre.org/)** — free, open-source vector map
   rendering (no API key).
-- **[PMTiles](https://protomaps.com/)** — single-file map tile archives you
-  download once per region and read directly in the browser via HTTP range
-  requests. No tile server, no internet required after download. This is
-  what makes offline regions possible, the same way onX's offline maps work.
 - **[Dexie.js](https://dexie.org/)** (IndexedDB wrapper) — stores trails,
   waypoints, and GPS tracks locally in the browser. Works fully offline.
 - **Service Worker** — caches the app shell (HTML/CSS/JS) so the app itself
@@ -31,12 +27,9 @@ trailmark-app/
 ├── js/
 │   ├── app.js           # Map init, UI wiring
 │   ├── db.js             # Dexie schema — trails, waypoints, tracks
-│   ├── gps.js             # Geolocation tracking (record a trail live)
-│   └── offline-regions.js # PMTiles region download/management
+│   └── gps.js             # Geolocation tracking (record a trail live)
 ├── sw.js                # Service worker — offline app shell caching
-├── manifest.json        # PWA manifest (installable, offline icon etc.)
-└── data/
-    └── regions/          # Downloaded .pmtiles files live here (gitignored)
+└── manifest.json        # PWA manifest (installable, offline icon etc.)
 ```
 
 ## Getting started
@@ -51,60 +44,28 @@ trailmark-app/
 
 2. Open the app, allow location access.
 
-3. Download an offline region (see below) before you lose signal.
+3. Before you lose signal: open **Offline Maps**, pan/zoom to the area
+   you want, and tap **Download This Area** — see below.
 
-## Getting offline map data for the southeast
+## Getting offline map data
 
-**Option A — the bundled GitHub Action (recommended)**
-`.github/workflows/build-region.yml` downloads a Geofabrik state extract,
-clips it to a bounding box with `osmium-tool`, and builds a `.pmtiles`
-archive with [Planetiler](https://github.com/onthegomap/planetiler) — then
-reads the archive's own header for bounds/zoom and commits both the file
-and a `regions-manifest.json` entry back to the repo. Run it from the
-repo's **Actions** tab (`Build offline map region` → **Run workflow**),
-filling in:
-- `region_name` / `region_label` — id and display name for the region
-- `geofabrik_path` — e.g. `north-america/us/georgia`, `north-america/us/florida`
-- `bbox` — `minLon,minLat,maxLon,maxLat` for the area to clip to
-
-Planetiler's default profile outputs the **OpenMapTiles** schema
-(`landcover` / `landuse` / `water` / `building` / `transportation` /
-`mountain_peak` / …, with a `class` property on transportation features —
-`path`/`track` is what `activateRegion()` in `js/app.js` styles as trails).
-That's what the CI job produces and what the app is styled for.
-
-**Option B — Protomaps' hosted builder**
-https://app.protomaps.com/downloads extracts a `.pmtiles` for a bounding
-box using a *different* schema (Protomaps basemap: `earth`/`landuse`/
-`water`/`buildings`/`roads` with a `kind` property) — `activateRegion()`
-would need restyling to match if you use this instead.
-
-Either way, drop the `.pmtiles` file into `data/regions/` and add an entry
-to `regions-manifest.json` (the CI workflow does this for you) — the app
-reads it directly, no server-side tile hosting needed, which is what keeps
-this free at any scale.
-
-## Included test fixture
-
-`data/regions/firenze-test.pmtiles` (Florence, Italy; © OpenStreetMap
-contributors, ODbL) is bundled from the
-[protomaps/PMTiles](https://github.com/protomaps/PMTiles) test fixtures to
-verify the offline-map *mechanics* — PMTiles source, the download/cache
-flow in **Offline Maps**, surviving a reload with no network — independent
-of any one region. It's in the Protomaps basemap schema (see Option B
-above), not the OpenMapTiles schema real regions use, so it downloads and
-caches correctly but won't show roads/water/etc. — only real regions built
-via the GitHub Action render fully styled.
+No pre-built regions or separate pipeline needed — **Offline Maps** in the
+app itself lets you pan/zoom to any area (an ORV park, a trailhead,
+anywhere) and download exactly that view while you're online. It fetches
+the online basemap's own vector tiles for that bounding box and caches
+them in the browser's Cache Storage (`sw.js`'s `ONLINE_TILES_CACHE`), so
+they render offline afterward exactly like they did online — no fixed
+list, no CI build step, no `.pmtiles` archive to manage.
 
 ## Roadmap
 
 - [x] Scaffold: map shell, offline tile support, local trail storage, PWA shell
-- [ ] Draw/record trails (GPS track recording via `watchPosition`)
-- [ ] Waypoint markers with notes/photos
-- [ ] Offline region download UI (pick a bounding box, fetch PMTiles)
+- [x] Draw/record trails (GPS track recording via `watchPosition`)
+- [x] Waypoint markers with notes/photos
+- [x] Offline region download UI (pan/zoom to any area, download that view)
 - [ ] Elevation profile for recorded trails
-- [ ] Supabase sync for multi-device / sharing
-- [ ] Export trail as GPX
+- [x] Supabase sync for multi-device / sharing
+- [x] Export trail as GPX
 
 ## License
 

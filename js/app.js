@@ -1,9 +1,5 @@
 import * as maplibregl from "../vendor/maplibre-gl/maplibre-gl.mjs";
 
-// Register PMTiles as a MapLibre protocol so `pmtiles://...` sources work.
-const pmtilesProtocol = new pmtiles.Protocol();
-maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile);
-
 // OpenFreeMap (https://openfreemap.org) — a free, no-API-key, no-usage-limit
 // hosted basemap, used only while online. It's what makes the map show a
 // normal world/US view by default instead of a blank screen; offline use
@@ -243,7 +239,6 @@ map.on("load", () => geolocateControl.trigger());
 // ---------- Basemap toggle (streets / satellite) ----------
 // Satellite is the default view.
 let currentBasemap = usingOnlineBasemap ? "satellite" : "offline";
-let activeRegionObjects = []; // regions currently activated, re-applied after every style switch
 
 function switchBasemap(kind) {
   if (kind === currentBasemap) return;
@@ -268,10 +263,9 @@ document.getElementById("btn-basemap")?.addEventListener("click", () => {
 });
 
 // A style.load fires after every map.setStyle() call (including the
-// first, initial one) — re-add whatever offline regions were active,
-// since setStyle wipes all custom sources/layers.
+// first, initial one) — re-add anything that isn't part of the base
+// style, since setStyle wipes all custom sources/layers.
 map.on("style.load", () => {
-  activeRegionObjects.forEach((region) => activateRegion(region));
   if (hillshadeOn) addHillshadeLayer();
   if (cellTowersOn) refreshCellTowerLayer().catch((err) => console.warn("Cell tower re-layer failed:", err));
   drawBreadcrumbLine();
@@ -1082,29 +1076,13 @@ async function openRegionsPanel() {
     )
     .join("");
 
-  const regions = await OfflineRegions.listWithStatus();
-  const rows = regions
-    .map(
-      (r) => `
-      <div class="region-item" data-name="${escHtml(r.name)}">
-        <div>
-          <div>${escHtml(r.label)}</div>
-          <small>${r.downloaded ? "Downloaded — available offline" : "Not downloaded"}</small>
-        </div>
-        <button class="pill-btn ${r.downloaded ? "danger" : ""}" data-action="${r.downloaded ? "remove" : "download"}">
-          ${r.downloaded ? "Remove" : "Download"}
-        </button>
-      </div>`
-    )
-    .join("");
-
   openPanel(
     "Offline Maps",
     `
     <h4 style="margin-bottom:4px;">Download Current View</h4>
     <p style="color:var(--text-dim);font-size:13px;">
       Pan/zoom the map to the area you want (an ORV park, a trailhead, anywhere), then download
-      it — not limited to a fixed list. Needs to be online right now to fetch the tiles.
+      it. Needs to be online right now to fetch the tiles.
     </p>
     <label>Name this area</label>
     <input id="custom-area-name" placeholder="e.g. Morris Mountain ORV Park" />
@@ -1116,12 +1094,6 @@ async function openRegionsPanel() {
     </select>
     <button class="primary" id="download-custom-area-btn">Download This Area</button>
     ${customAreaRows}
-    <h4 style="margin-bottom:4px;margin-top:18px;">Pre-built Regions</h4>
-    <p style="color:var(--text-dim);font-size:13px;">
-      Curated downloads built ahead of time (see README) — mainly useful if you want one ready
-      before this feature existed, or a very large area built server-side.
-    </p>
-    ${rows || "<p>No regions declared in data/regions/regions-manifest.json yet.</p>"}
     `
   );
 
@@ -1162,221 +1134,6 @@ async function openRegionsPanel() {
       openRegionsPanel();
     });
   });
-
-  panelBody.querySelectorAll(".region-item[data-name] button").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      const item = e.target.closest(".region-item");
-      const name = item.dataset.name;
-      const region = regions.find((r) => r.name === name);
-      const action = e.target.dataset.action;
-      if (action === "download") {
-        e.target.textContent = "Downloading…";
-        e.target.disabled = true;
-        try {
-          await OfflineRegions.download(region, (frac) => {
-            e.target.textContent = `${Math.round(frac * 100)}%`;
-          });
-          activateRegion(region);
-          openRegionsPanel();
-        } catch (err) {
-          alert(err.message);
-          openRegionsPanel();
-        }
-      } else {
-        await OfflineRegions.remove(region);
-        openRegionsPanel();
-      }
-    });
-  });
-}
-
-// Layer names below match the OpenMapTiles schema — what Planetiler's
-// default profile outputs (the .github/workflows/build-region.yml CI job
-// uses this to build real regions; confirmed against an actual built
-// archive, not assumed). A Protomaps-basemap-schema archive (e.g. the
-// bundled firenze-test.pmtiles fixture, or the README's "Option A") uses
-// different layer names (earth/landuse/water/buildings/roads with a "kind"
-// property) and won't render right here — regenerate it with the CI
-// workflow to get this schema instead.
-function activateRegion(region) {
-  if (!activeRegionObjects.some((r) => r.name === region.name)) {
-    activeRegionObjects.push(region);
-  }
-  const sourceId = `region-${region.name}`;
-  if (map.getSource(sourceId)) return;
-  document.getElementById("map-hint").classList.add("hidden");
-
-  const cachedSource = OfflineRegions.getSource(region);
-  pmtilesProtocol.add(new pmtiles.PMTiles(cachedSource));
-
-  map.addSource(sourceId, {
-    type: "vector",
-    url: `pmtiles://${cachedSource.getKey()}`,
-    attribution: region.attribution || "",
-  });
-  map.addLayer({
-    id: `${sourceId}-landcover`,
-    type: "fill",
-    source: sourceId,
-    "source-layer": "landcover",
-    paint: { "fill-color": "#1e293b" },
-  });
-  map.addLayer({
-    id: `${sourceId}-landuse`,
-    type: "fill",
-    source: sourceId,
-    "source-layer": "landuse",
-    paint: { "fill-color": "#243447", "fill-opacity": 0.6 },
-  });
-  map.addLayer({
-    id: `${sourceId}-park`,
-    type: "fill",
-    source: sourceId,
-    "source-layer": "park",
-    paint: { "fill-color": "#14532d", "fill-opacity": 0.35 },
-  });
-  map.addLayer({
-    id: `${sourceId}-water`,
-    type: "fill",
-    source: sourceId,
-    "source-layer": "water",
-    paint: { "fill-color": "#0c4a6e" },
-  });
-  map.addLayer({
-    id: `${sourceId}-waterway`,
-    type: "line",
-    source: sourceId,
-    "source-layer": "waterway",
-    paint: { "line-color": "#0c4a6e", "line-width": 1 },
-  });
-  map.addLayer({
-    id: `${sourceId}-buildings`,
-    type: "fill",
-    source: sourceId,
-    "source-layer": "building",
-    paint: { "fill-color": "#334155" },
-  });
-  map.addLayer({
-    id: `${sourceId}-roads`,
-    type: "line",
-    source: sourceId,
-    "source-layer": "transportation",
-    layout: { "line-join": "round", "line-cap": "round" },
-    paint: { "line-color": "#94a3b8", "line-width": 1 },
-  });
-  // This app is for Jeep/OHV trail riding, not hiking — so unpaved
-  // "track" ways (forest roads, 4x4 routes) get the prominent trail-green
-  // highlight, while foot-only "path" ways (hiking singletrack) are drawn
-  // thin and dim: still visible for context (e.g. knowing a route isn't
-  // vehicle-passable) but not the primary highlight.
-  map.addLayer({
-    id: `${sourceId}-tracks`,
-    type: "line",
-    source: sourceId,
-    "source-layer": "transportation",
-    filter: ["==", ["get", "class"], "track"],
-    layout: { "line-join": "round", "line-cap": "round" },
-    paint: { "line-color": "#22c55e", "line-width": 2, "line-dasharray": [2, 1.5] },
-  });
-  map.addLayer({
-    id: `${sourceId}-foot-paths`,
-    type: "line",
-    source: sourceId,
-    "source-layer": "transportation",
-    filter: ["==", ["get", "class"], "path"],
-    layout: { "line-join": "round", "line-cap": "round" },
-    paint: { "line-color": "#4d7c0f", "line-width": 1, "line-dasharray": [1, 2], "line-opacity": 0.6 },
-  });
-  map.addLayer({
-    id: `${sourceId}-peaks`,
-    type: "symbol",
-    source: sourceId,
-    "source-layer": "mountain_peak",
-    layout: {
-      "text-field": ["get", "name"],
-      "text-size": 11,
-      "text-offset": [0, 0.8],
-      "text-anchor": "top",
-    },
-    paint: { "text-color": "#e2e8f0", "text-halo-color": "#0f172a", "text-halo-width": 1 },
-  });
-  // Points of interest relevant to trip planning (confirmed against the
-  // actual poi layer classes in a real built region, not guessed): fuel,
-  // campsite, parking, picnic_site, drinking_water, lodging, toilets.
-  // Colored circle + short ASCII label instead of emoji: MapLibre's SDF
-  // text rendering doesn't support color emoji without a sprite sheet —
-  // tried that first, got "missing glyph" boxes in local testing, so
-  // this renders as plain text instead, which is confirmed working (the
-  // peak-name labels above use the same approach).
-  map.addLayer({
-    id: `${sourceId}-poi`,
-    type: "circle",
-    source: sourceId,
-    "source-layer": "poi",
-    minzoom: 12,
-    filter: [
-      "in",
-      ["get", "class"],
-      ["literal", ["fuel", "campsite", "parking", "picnic_site", "drinking_water", "lodging", "toilets"]],
-    ],
-    paint: {
-      "circle-radius": 5,
-      "circle-stroke-width": 1,
-      "circle-stroke-color": "#0f172a",
-      "circle-color": [
-        "match",
-        ["get", "class"],
-        "fuel", "#f59e0b",
-        "campsite", "#22c55e",
-        "parking", "#60a5fa",
-        "picnic_site", "#a78bfa",
-        "drinking_water", "#38bdf8",
-        "lodging", "#f472b6",
-        "toilets", "#94a3b8",
-        "#e2e8f0",
-      ],
-    },
-  });
-  map.addLayer({
-    id: `${sourceId}-poi-label`,
-    type: "symbol",
-    source: sourceId,
-    "source-layer": "poi",
-    minzoom: 13,
-    filter: [
-      "in",
-      ["get", "class"],
-      ["literal", ["fuel", "campsite", "parking", "picnic_site", "drinking_water", "lodging", "toilets"]],
-    ],
-    layout: {
-      "text-field": [
-        "match",
-        ["get", "class"],
-        "fuel", "Fuel",
-        "campsite", "Camp",
-        "parking", "Parking",
-        "picnic_site", "Picnic",
-        "drinking_water", "Water",
-        "lodging", "Lodging",
-        "toilets", "Restroom",
-        "POI",
-      ],
-      "text-size": 10,
-      "text-offset": [0, 0.9],
-      "text-anchor": "top",
-    },
-    paint: { "text-color": "#e2e8f0", "text-halo-color": "#0f172a", "text-halo-width": 1 },
-  });
-  if (region.bounds) {
-    map.fitBounds(region.bounds, { padding: 20 });
-  }
-}
-
-// Re-activate already-downloaded regions on load so offline maps show up
-// immediately without re-fetching anything.
-async function restoreDownloadedRegions() {
-  const regions = await OfflineRegions.listWithStatus();
-  regions.filter((r) => r.downloaded).forEach(activateRegion);
 }
 
 // ---------- Saved trails ----------
@@ -2098,7 +1855,6 @@ if (usingOnlineBasemap) {
 map.on("load", async () => {
   await refreshWaypointMarkers();
   await refreshPhotoMarkers();
-  await restoreDownloadedRegions();
   await initBreadcrumbTrail();
 });
 

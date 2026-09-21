@@ -8,7 +8,6 @@ point of an offline-first app.
 | Library | Version | License | Notes |
 |---|---|---|---|
 | [maplibre-gl](https://maplibre.org/) | 6.10.0 | BSD-3-Clause | ESM build (`maplibre-gl.mjs` + its `-shared` and `-worker` chunks). Pinned above 6.4.0 to avoid [a known XSS sanitizer-bypass vulnerability](https://github.com/advisories) in 4.x/≤6.4.0 — do not downgrade below 6.5.0 without checking `npm audit` again. |
-| [pmtiles](https://github.com/protomaps/pmtiles) | 4.5.0 | BSD-3-Clause | Classic UMD build (`pmtiles.js`, global `pmtiles`). |
 | [dexie](https://dexie.org/) | 4.4.6 | Apache-2.0 | Classic minified UMD build (`dexie.js`, global `Dexie`). |
 | [@supabase/supabase-js](https://github.com/supabase/supabase-js) | 2.116.0 | MIT | Classic UMD build (`supabase.js`, global `supabase` — use `supabase.createClient(url, key)`). Only used for group features (auth, shared waypoints/trails, live location, chat) — see `js/group/`. Inert with no console errors if `js/group/config.js` has no URL/key configured. |
 
@@ -16,7 +15,7 @@ point of an offline-first app.
 
 ```bash
 mkdir /tmp/vendor-update && cd /tmp/vendor-update
-npm init -y && npm install maplibre-gl@latest pmtiles@latest dexie@latest @supabase/supabase-js@latest
+npm init -y && npm install maplibre-gl@latest dexie@latest @supabase/supabase-js@latest
 npm audit   # check for known vulnerabilities before copying anything in
 
 cp node_modules/maplibre-gl/dist/maplibre-gl.mjs \
@@ -25,7 +24,6 @@ cp node_modules/maplibre-gl/dist/maplibre-gl.mjs \
    node_modules/maplibre-gl/dist/maplibre-gl.css \
    <repo>/vendor/maplibre-gl/
 
-cp node_modules/pmtiles/dist/pmtiles.js <repo>/vendor/pmtiles/
 cp node_modules/dexie/dist/dexie.min.js <repo>/vendor/dexie/dexie.js
 cp node_modules/@supabase/supabase-js/dist/umd/supabase.js <repo>/vendor/supabase/supabase.js
 ```

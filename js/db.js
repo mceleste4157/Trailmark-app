@@ -49,6 +49,18 @@ db.version(4).stores({
   photos: "++id, createdAt",
 });
 
+db.version(5).stores({
+  trails: "++id, name, createdAt",
+  waypoints: "++id, name, createdAt",
+  // Prebuilt offline regions (curated .pmtiles archives) were removed in
+  // favor of "Download This Area" (CustomAreaStore below) — drop the now
+  // unused table.
+  regions: null,
+  breadcrumbs: "++id, t",
+  customAreas: "++id, &name, downloadedAt",
+  photos: "++id, createdAt",
+});
+
 const TrailStore = {
   async saveTrail({ name, kind, points, distanceMeters, startedAt, endedAt, difficulty }) {
     return db.trails.add({
@@ -140,17 +152,5 @@ const PhotoStore = {
   },
   async deletePhoto(id) {
     return db.photos.delete(id);
-  },
-};
-
-const RegionStore = {
-  async registerRegion(name) {
-    return db.regions.put({ name, downloadedAt: Date.now() });
-  },
-  async listRegions() {
-    return db.regions.toArray();
-  },
-  async removeRegion(name) {
-    return db.regions.where("name").equals(name).delete();
   },
 };
