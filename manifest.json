@@ -1,7 +1,7 @@
 {
   "name": "Trailmark",
   "short_name": "Trailmark",
-  "description": "Offline-first trail marking app",
+  "description": "Offline-first Jeep/OHV trail app for group rides",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

@@ -109,7 +109,8 @@ html, body {
   pointer-events: auto;
 }
 
-#btn-basemap {
+#btn-basemap,
+#btn-terrain {
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -117,6 +118,11 @@ html, body {
   border: 1px solid var(--border);
   color: var(--text);
   cursor: pointer;
+}
+
+#btn-terrain.active-pill {
+  border-color: var(--accent-bright);
+  color: var(--accent-bright);
 }
 
 #toolbar {
@@ -236,6 +242,37 @@ html, body {
 }
 
 #recording-hud.hidden { display: none; }
+
+#planning-hud {
+  position: absolute;
+  z-index: 15;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--accent-bright);
+  border-radius: 16px;
+  padding: 8px 12px;
+  max-width: 92vw;
+  font-size: 12px;
+}
+
+#planning-hud.hidden { display: none; }
+
+#planning-hud button {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
 
 #recording-dot {
   width: 10px;

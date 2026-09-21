@@ -29,6 +29,7 @@
   <span id="app-title">Trailmark</span>
   <span id="topbar-right">
     <button id="btn-basemap" title="Toggle satellite/streets basemap">🗺️ Streets</button>
+    <button id="btn-terrain" title="Toggle terrain shading (elevation)">⛰️</button>
     <span id="status-pill" class="offline">checking…</span>
   </span>
 </header>
@@ -56,6 +57,13 @@
   <span id="recording-time">00:00</span>
   <span id="recording-dist">0.00 mi</span>
   <button id="btn-stop-recording">Stop &amp; Save</button>
+</div>
+
+<div id="planning-hud" class="hidden">
+  <span>Tap the map to add points · <span id="planning-count">0</span> pts · <span id="planning-dist">0.00 mi</span></span>
+  <button id="btn-planning-undo">Undo</button>
+  <button id="btn-planning-finish">Finish &amp; Save</button>
+  <button id="btn-planning-cancel">Cancel</button>
 </div>
 
 <script src="js/db.js"></script>

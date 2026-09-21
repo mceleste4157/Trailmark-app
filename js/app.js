@@ -104,7 +104,52 @@ document.getElementById("btn-basemap")?.addEventListener("click", () => {
 // since setStyle wipes all custom sources/layers.
 map.on("style.load", () => {
   activeRegionObjects.forEach((region) => activateRegion(region));
+  if (hillshadeOn) addHillshadeLayer();
 });
+
+// ---------- Terrain hillshade (elevation relief) ----------
+// AWS Terrain Tiles (free, public, no API key — a standard, widely-used
+// source for exactly this) as a hillshade overlay, useful for spotting
+// steep/technical terrain when planning a route. Online-only, like the
+// satellite imagery — not cached for offline use.
+let hillshadeOn = false;
+const TERRAIN_SOURCE_ID = "aws-terrain-dem";
+
+function addHillshadeLayer() {
+  if (map.getSource(TERRAIN_SOURCE_ID)) return;
+  map.addSource(TERRAIN_SOURCE_ID, {
+    type: "raster-dem",
+    tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+    tileSize: 256,
+    encoding: "terrarium",
+    attribution: "Terrain: AWS Terrain Tiles",
+  });
+  map.addLayer({
+    id: "hillshade-layer",
+    type: "hillshade",
+    source: TERRAIN_SOURCE_ID,
+    paint: { "hillshade-exaggeration": 0.6 },
+  });
+}
+
+function removeHillshadeLayer() {
+  if (map.getLayer("hillshade-layer")) map.removeLayer("hillshade-layer");
+  if (map.getSource(TERRAIN_SOURCE_ID)) map.removeSource(TERRAIN_SOURCE_ID);
+}
+
+function toggleHillshade() {
+  if (!navigator.onLine && !hillshadeOn) {
+    alert("Terrain shading needs an internet connection — it isn't downloaded for offline use.");
+    return;
+  }
+  hillshadeOn = !hillshadeOn;
+  if (hillshadeOn) addHillshadeLayer();
+  else removeHillshadeLayer();
+  const btn = document.getElementById("btn-terrain");
+  if (btn) btn.classList.toggle("active-pill", hillshadeOn);
+}
+
+document.getElementById("btn-terrain")?.addEventListener("click", toggleHillshade);
 
 let trailSourceCounter = 0;
 let activeWaypointMarkers = [];
@@ -241,15 +286,26 @@ function openRecordPanel() {
     openPanel("Recording in progress", `<p>A trail is already being recorded. Use the Stop &amp; Save button on the map.</p>`);
     return;
   }
+  if (planningRoute) {
+    openPanel("Planning in progress", `<p>You're already planning a route. Use the Finish &amp; Save or Cancel button on the map.</p>`);
+    return;
+  }
   openPanel(
-    "Record a Trail",
+    "Record or Plan a Trail",
     `
-    <p style="color:var(--text-dim);font-size:13px;">Tracks your GPS position as you move. Works fully offline — recording only needs the device's GPS, not the network.</p>
+    <p style="color:var(--text-dim);font-size:13px;">Tracks your GPS position as you drive. Works fully offline — recording only needs the device's GPS, not the network.</p>
     <label>Trail name</label>
-    <input id="rec-name" placeholder="e.g. Blood Mountain Loop" />
-    <button class="primary" id="rec-start">Start Recording</button>
+    <input id="rec-name" placeholder="e.g. Fire Road 42" />
+    <button class="primary" id="rec-start">Start Recording (GPS)</button>
+    <p style="color:var(--text-dim);font-size:13px;margin-top:14px;">Or lay out a route ahead of time by tapping points on the map — useful for planning before you head out.</p>
+    <button class="primary" id="rec-plan" style="background:var(--panel);border:1px solid var(--accent-bright);">Plan a Route (tap map)</button>
     `
   );
+  document.getElementById("rec-plan").addEventListener("click", () => {
+    const name = document.getElementById("rec-name").value.trim() || "Unnamed route";
+    startPlanningRoute(name);
+    closePanel();
+  });
   document.getElementById("rec-start").addEventListener("click", () => {
     const name = document.getElementById("rec-name").value.trim() || "Unnamed trail";
     try {
@@ -285,6 +341,7 @@ document.getElementById("btn-stop-recording").addEventListener("click", async ()
 
   await TrailStore.saveTrail({
     name: window.__pendingTrailName || "Unnamed trail",
+    kind: "recorded",
     points: result.points,
     distanceMeters: result.distanceMeters,
     startedAt: result.startedAt,
@@ -296,6 +353,97 @@ document.getElementById("btn-stop-recording").addEventListener("click", async ()
     map.removeSource(liveTrailSourceId);
     liveTrailSourceId = null;
   }
+});
+
+// ---------- Route planning (tap the map to lay out a route ahead of time) ----------
+const planningHud = document.getElementById("planning-hud");
+let planningRoute = false;
+let planningPoints = [];
+let planningName = "";
+
+function totalDistanceMeters(points) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const s =
+      Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    total += 2 * R * Math.asin(Math.sqrt(s));
+  }
+  return total;
+}
+
+function startPlanningRoute(name) {
+  planningRoute = true;
+  planningPoints = [];
+  planningName = name;
+  planningHud.classList.remove("hidden");
+  updatePlanningHud();
+  map.getCanvas().style.cursor = "crosshair";
+  map.on("click", onPlanningMapClick);
+}
+
+function onPlanningMapClick(e) {
+  planningPoints.push({ lat: e.lngLat.lat, lng: e.lngLat.lng, ele: null, t: Date.now() });
+  drawLiveTrail(planningPoints);
+  updatePlanningHud();
+}
+
+function updatePlanningHud() {
+  document.getElementById("planning-count").textContent = planningPoints.length;
+  document.getElementById("planning-dist").textContent = `${metersToMiles(totalDistanceMeters(planningPoints)).toFixed(2)} mi`;
+}
+
+function stopPlanningRoute() {
+  planningRoute = false;
+  planningHud.classList.add("hidden");
+  map.getCanvas().style.cursor = "";
+  map.off("click", onPlanningMapClick);
+  if (liveTrailSourceId) {
+    map.removeLayer(liveTrailSourceId);
+    map.removeSource(liveTrailSourceId);
+    liveTrailSourceId = null;
+  }
+  planningPoints = [];
+}
+
+document.getElementById("btn-planning-undo").addEventListener("click", () => {
+  planningPoints.pop();
+  drawLiveTrail(planningPoints);
+  if (planningPoints.length < 2 && liveTrailSourceId) {
+    map.removeLayer(liveTrailSourceId);
+    map.removeSource(liveTrailSourceId);
+    liveTrailSourceId = null;
+  }
+  updatePlanningHud();
+});
+
+document.getElementById("btn-planning-cancel").addEventListener("click", () => {
+  if (planningPoints.length > 0 && !confirm("Discard this planned route?")) return;
+  stopPlanningRoute();
+});
+
+document.getElementById("btn-planning-finish").addEventListener("click", async () => {
+  if (planningPoints.length < 2) {
+    alert("Add at least 2 points before saving.");
+    return;
+  }
+  const points = planningPoints;
+  const name = planningName;
+  stopPlanningRoute();
+  await TrailStore.saveTrail({
+    name,
+    kind: "planned",
+    points,
+    distanceMeters: totalDistanceMeters(points),
+    startedAt: null,
+    endedAt: null,
+  });
+  alert(`Saved "${name}" — find it under My Trails.`);
 });
 
 // ---------- Offline regions ----------
@@ -428,19 +576,28 @@ function activateRegion(region) {
     layout: { "line-join": "round", "line-cap": "round" },
     paint: { "line-color": "#94a3b8", "line-width": 1 },
   });
-  // Foot/cycle paths and tracks — the closest thing to "trails" in this
-  // schema — pulled out of the transportation layer and drawn in
-  // trail-green. OpenMapTiles' "class" values for these are "path" and
-  // "track"; "subclass" narrows further (footway, cycleway, bridleway,
-  // steps, path).
+  // This app is for Jeep/OHV trail riding, not hiking — so unpaved
+  // "track" ways (forest roads, 4x4 routes) get the prominent trail-green
+  // highlight, while foot-only "path" ways (hiking singletrack) are drawn
+  // thin and dim: still visible for context (e.g. knowing a route isn't
+  // vehicle-passable) but not the primary highlight.
   map.addLayer({
-    id: `${sourceId}-trails`,
+    id: `${sourceId}-tracks`,
     type: "line",
     source: sourceId,
     "source-layer": "transportation",
-    filter: ["in", ["get", "class"], ["literal", ["path", "track"]]],
+    filter: ["==", ["get", "class"], "track"],
     layout: { "line-join": "round", "line-cap": "round" },
-    paint: { "line-color": "#22c55e", "line-width": 1.5, "line-dasharray": [2, 1.5] },
+    paint: { "line-color": "#22c55e", "line-width": 2, "line-dasharray": [2, 1.5] },
+  });
+  map.addLayer({
+    id: `${sourceId}-foot-paths`,
+    type: "line",
+    source: sourceId,
+    "source-layer": "transportation",
+    filter: ["==", ["get", "class"], "path"],
+    layout: { "line-join": "round", "line-cap": "round" },
+    paint: { "line-color": "#4d7c0f", "line-width": 1, "line-dasharray": [1, 2], "line-opacity": 0.6 },
   });
   map.addLayer({
     id: `${sourceId}-peaks`,
@@ -475,11 +632,13 @@ async function openTrailsPanel() {
       (t) => `
       <div class="trail-item" data-id="${t.id}">
         <div>
-          <div>${escHtml(t.name)}</div>
+          <div>${escHtml(t.name)} <small style="color:var(--text-dim);">${t.kind === "planned" ? "(planned)" : "(recorded)"}</small></div>
           <small>${metersToMiles(t.distanceMeters).toFixed(2)} mi · ${new Date(t.createdAt).toLocaleDateString()}</small>
         </div>
         <div>
           <button class="pill-btn" data-action="show">Show</button>
+          <button class="pill-btn" data-action="export">GPX</button>
+          ${activeGroup ? '<button class="pill-btn" data-action="share">Share</button>' : ""}
           <button class="pill-btn danger" data-action="delete">Delete</button>
         </div>
       </div>`
@@ -491,9 +650,26 @@ async function openTrailsPanel() {
   panelBody.querySelectorAll(".trail-item button").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       const id = Number(e.target.closest(".trail-item").dataset.id);
-      if (e.target.dataset.action === "delete") {
+      const action = e.target.dataset.action;
+      if (action === "delete") {
         await TrailStore.deleteTrail(id);
         openTrailsPanel();
+      } else if (action === "export") {
+        const trail = await TrailStore.getTrail(id);
+        downloadFile(`${trail.name.replace(/[^a-z0-9]+/gi, "-")}.gpx`, trailToGpx(trail), "application/gpx+xml");
+      } else if (action === "share") {
+        const trail = await TrailStore.getTrail(id);
+        try {
+          await GroupBackend.addTrail(activeGroup.id, {
+            name: trail.name,
+            kind: trail.kind,
+            points: trail.points,
+            distanceMeters: trail.distanceMeters,
+          });
+          alert(`Shared "${trail.name}" with ${activeGroup.name}.`);
+        } catch (err) {
+          alert("Could not share trail: " + err.message);
+        }
       } else {
         const trail = await TrailStore.getTrail(id);
         showTrailOnMap(trail);
@@ -501,6 +677,39 @@ async function openTrailsPanel() {
       }
     });
   });
+}
+
+// GPX 1.1 — the standard format for GPS tracks, readable by basically
+// every mapping/GPS tool (Garmin, Google Earth, CalTopo, onX's own
+// import, etc.), which is what makes "export where we went" useful.
+function trailToGpx(trail) {
+  const points = trail.points
+    .map((p) => {
+      const ele = typeof p.ele === "number" ? `<ele>${p.ele.toFixed(1)}</ele>` : "";
+      const time = p.t ? `<time>${new Date(p.t).toISOString()}</time>` : "";
+      return `      <trkpt lat="${p.lat}" lon="${p.lng}">${ele}${time}</trkpt>`;
+    })
+    .join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Trailmark" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>${escHtml(trail.name)}</name>
+    <trkseg>
+${points}
+    </trkseg>
+  </trk>
+</gpx>
+`;
+}
+
+function downloadFile(filename, content, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function showTrailOnMap(trail) {

@@ -13,9 +13,10 @@ db.version(1).stores({
 });
 
 const TrailStore = {
-  async saveTrail({ name, points, distanceMeters, startedAt, endedAt }) {
+  async saveTrail({ name, kind, points, distanceMeters, startedAt, endedAt }) {
     return db.trails.add({
       name,
+      kind: kind || "recorded", // 'recorded' (GPS-tracked) | 'planned' (drawn on the map ahead of time)
       points, // [{ lat, lng, ele, t }]
       distanceMeters,
       startedAt,
