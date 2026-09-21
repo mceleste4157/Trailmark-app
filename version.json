@@ -1,6 +1,12 @@
 {
-  "current": "1.10",
+  "current": "1.11",
   "history": [
+    {
+      "version": "1.11",
+      "date": "2026-09-21",
+      "summary": "Fetch photo GPS location before opening the camera, not after",
+      "commit": "71e46b3"
+    },
     {
       "version": "1.10",
       "date": "2026-09-21",
