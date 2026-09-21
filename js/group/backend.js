@@ -1,6 +1,6 @@
 // Thin wrapper around the Supabase client for every shared/social feature:
-// auth, shared waypoints/trails (with photos + ratings), live location,
-// chat, and emergency alerts. There's no "group" concept — every signed-in
+// auth, shared waypoints/trails (with photos + ratings), live location, and
+// chat. There's no "group" concept — every signed-in
 // user shares one space, scoped only by auth.uid() for writes and
 // "authenticated" for reads. See sql/schema.sql for the tables/policies
 // this talks to, and js/group/config.js for how to activate it.
@@ -23,6 +23,7 @@ const GroupBackend = (() => {
       listFolders: disabled,
       addWaypoint: disabled,
       listWaypoints: disabled,
+      subscribeWaypoints: disabled,
       addTrail: disabled,
       setTrailRating: disabled,
       setTrailDifficulty: disabled,
@@ -39,9 +40,6 @@ const GroupBackend = (() => {
       subscribeLocations: disabled,
       sendMessage: disabled,
       subscribeMessages: disabled,
-      raiseEmergency: disabled,
-      resolveEmergency: disabled,
-      subscribeEmergency: disabled,
     };
   }
 
@@ -124,9 +122,22 @@ const GroupBackend = (() => {
   }
 
   async function listWaypoints() {
-    const { data, error } = await client.from("shared_waypoints").select().order("created_at", { ascending: false });
+    const { data, error } = await client
+      .from("shared_waypoints")
+      .select("*, profiles(display_name)")
+      .order("created_at", { ascending: false });
     if (error) throw error;
     return data;
+  }
+
+  function subscribeWaypoints(onUpdate) {
+    listWaypoints().then((data) => data && onUpdate(data));
+    return client
+      .channel("shared-waypoints")
+      .on("postgres_changes", { event: "*", schema: "public", table: "shared_waypoints" }, () =>
+        listWaypoints().then((data) => data && onUpdate(data))
+      )
+      .subscribe();
   }
 
   // ---------- Shared trails ----------
@@ -288,35 +299,6 @@ const GroupBackend = (() => {
       .subscribe();
   }
 
-  // ---------- Emergency ----------
-  async function raiseEmergency({ lat, lng, message }) {
-    const uid = await currentUserId();
-    const { data, error } = await client
-      .from("emergency_alerts")
-      .insert({ raised_by: uid, lat, lng, message: message || "" })
-      .select()
-      .single();
-    if (error) throw error;
-    return data;
-  }
-
-  async function resolveEmergency(alertId) {
-    const { error } = await client
-      .from("emergency_alerts")
-      .update({ resolved_at: new Date().toISOString() })
-      .eq("id", alertId);
-    if (error) throw error;
-  }
-
-  function subscribeEmergency(onAlert) {
-    return client
-      .channel("emergency-alerts")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "emergency_alerts" }, (payload) =>
-        onAlert(payload.new)
-      )
-      .subscribe();
-  }
-
   return {
     enabled: true,
     onAuthChange,
@@ -328,6 +310,7 @@ const GroupBackend = (() => {
     listFolders,
     addWaypoint,
     listWaypoints,
+    subscribeWaypoints,
     addTrail,
     setTrailRating,
     setTrailDifficulty,
@@ -344,8 +327,5 @@ const GroupBackend = (() => {
     subscribeLocations,
     sendMessage,
     subscribeMessages,
-    raiseEmergency,
-    resolveEmergency,
-    subscribeEmergency,
   };
 })();

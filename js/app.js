@@ -225,6 +225,17 @@ btnTilt.addEventListener("click", enableTilt);
 
 geolocateControl.on("geolocate", updateStatsHud);
 
+// A running cache of the most recent GPS fix, fed by the GeolocateControl's
+// continuous watch. Used as a fallback when a one-off getCurrentPosition()
+// call (e.g. for tagging a photo) times out or fails outright — e.g. right
+// after the camera app hands focus back and the GPS radio hasn't
+// reacquired yet — so a slow/failed fresh fix doesn't mean losing the
+// capture entirely.
+let lastKnownPosition = null;
+geolocateControl.on("geolocate", (pos) => {
+  lastKnownPosition = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: Date.now() };
+});
+
 geolocateControl.on("error", (err) => {
   locateBanner.textContent =
     err.code === 1 // PERMISSION_DENIED
@@ -573,13 +584,32 @@ let pendingPhotoLocation = null;
 function requestPhotoLocation() {
   pendingPhotoLocation = new Promise((resolve, reject) => {
     if (!("geolocation" in navigator)) {
-      reject(new Error("Geolocation isn't available on this device."));
+      // Still fall back to the last fix from the map's own GPS watch
+      // rather than losing the photo outright.
+      if (lastKnownPosition) {
+        resolve({ lat: lastKnownPosition.lat, lng: lastKnownPosition.lng });
+      } else {
+        reject(new Error("Geolocation isn't available on this device."));
+      }
       return;
     }
     navigator.geolocation.getCurrentPosition(
       (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      (err) => reject(err),
-      { enableHighAccuracy: true, timeout: 10000 }
+      (err) => {
+        // A fresh fix can time out or fail right after the camera app
+        // hands focus back (GPS radio hasn't reacquired yet) — fall back
+        // to the most recent fix from the map's continuous watch instead
+        // of throwing the photo away.
+        if (lastKnownPosition && Date.now() - lastKnownPosition.t < 5 * 60 * 1000) {
+          resolve({ lat: lastKnownPosition.lat, lng: lastKnownPosition.lng });
+        } else {
+          reject(err);
+        }
+      },
+      // maximumAge lets the browser hand back an already-cached fix from
+      // its ongoing watch instantly instead of forcing a brand-new one —
+      // a big part of why this could time out at all.
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 20000 }
     );
   });
 }
@@ -892,6 +922,62 @@ async function refreshGroupPhotoMarkers(rows) {
     if (!seen.has(id)) {
       groupPhotoMarkers[id].remove();
       delete groupPhotoMarkers[id];
+    }
+  });
+}
+
+async function refreshGroupWaypointMarkers(rows) {
+  const seen = new Set();
+  for (const row of rows) {
+    if (session && row.created_by === session.user.id) continue; // already shown via the local waypoint markers
+    seen.add(row.id);
+    if (groupWaypointMarkers[row.id]) continue; // already rendered this session
+
+    const color = CATEGORY_COLORS[row.category] || CATEGORY_COLORS.other;
+
+    const container = document.createElement("div");
+    container.style.maxWidth = "220px";
+    const title = document.createElement("div");
+    title.innerHTML = `<strong>${escHtml(row.name)}</strong> <span style="color:#6b7280;font-size:12px;">(${
+      CATEGORY_LABELS[row.category] || "Other"
+    })</span>`;
+    container.appendChild(title);
+    if (row.note) {
+      const note = document.createElement("div");
+      note.style.cssText = "font-size:12px;margin-top:4px;";
+      note.textContent = row.note;
+      container.appendChild(note);
+    }
+    if (row.photo_path) {
+      try {
+        const url = await GroupBackend.photoUrl(row.photo_path);
+        const img = document.createElement("img");
+        img.src = url;
+        img.alt = "Waypoint photo";
+        img.style.cssText = "width:100%;border-radius:8px;display:block;margin-top:6px;";
+        container.appendChild(img);
+      } catch (err) {
+        console.warn("Could not load a shared waypoint's photo:", err.message);
+      }
+    }
+    const byline = document.createElement("div");
+    byline.style.cssText = "font-size:12px;margin-top:6px;color:var(--text-dim);";
+    byline.textContent = `By ${row.profiles?.display_name || "Rider"}`;
+    container.appendChild(byline);
+    const date = document.createElement("div");
+    date.style.cssText = "font-size:11px;color:#9ca3af;margin-top:4px;";
+    date.textContent = new Date(row.created_at).toLocaleString();
+    container.appendChild(date);
+
+    groupWaypointMarkers[row.id] = new maplibregl.Marker({ color })
+      .setLngLat([row.lng, row.lat])
+      .setPopup(new maplibregl.Popup().setDOMContent(container))
+      .addTo(map);
+  }
+  Object.keys(groupWaypointMarkers).forEach((id) => {
+    if (!seen.has(id)) {
+      groupWaypointMarkers[id].remove();
+      delete groupWaypointMarkers[id];
     }
   });
 }
@@ -1623,7 +1709,7 @@ function showTrailOnMap(trail) {
   map.fitBounds(bounds, { padding: 40 });
 }
 
-// ---------- Crew (accounts, chat, live locations, emergency) ----------
+// ---------- Crew (accounts, chat, live locations) ----------
 // No "group" concept — every signed-in user shares one space (see
 // sql/schema.sql). `socialActive` tracks whether the realtime
 // subscriptions + location broadcast are currently running, which starts
@@ -1637,9 +1723,10 @@ let memberLocationMarkers = {};
 let locationBroadcastWatchId = null;
 let chatChannel = null;
 let locationChannel = null;
-let emergencyChannel = null;
 let photoChannel = null;
 let groupPhotoMarkers = {};
+let waypointChannel = null;
+let groupWaypointMarkers = {};
 
 if (GroupBackend.enabled) {
   GroupBackend.getSession()
@@ -1657,7 +1744,7 @@ async function openGroupPanel() {
   if (!GroupBackend.enabled) {
     openPanel(
       "Crew",
-      `<p style="color:var(--text-dim);font-size:13px;">Crew features (chat, live locations, shared markers, emergency alerts) aren't set up yet — see js/group/config.js in the repo.</p>`
+      `<p style="color:var(--text-dim);font-size:13px;">Crew features (chat, live locations, shared markers) aren't set up yet — see js/group/config.js in the repo.</p>`
     );
     return;
   }
@@ -1672,7 +1759,6 @@ async function openGroupPanel() {
 function activateSocial() {
   if (socialActive) return;
   socialActive = true;
-  document.getElementById("btn-emergency").classList.remove("hidden");
   startLocationBroadcast();
   locationChannel = GroupBackend.subscribeLocations(refreshMemberMarkers);
   chatMessages = [];
@@ -1680,26 +1766,24 @@ function activateSocial() {
     chatMessages.push(msg);
     appendChatMessageIfOpen(msg);
   });
-  emergencyChannel = GroupBackend.subscribeEmergency((emergencyAlert) => {
-    if (session && emergencyAlert.raised_by === session.user.id) return; // don't alarm the person who raised it
-    window.alert(`🆘 Emergency alert!${emergencyAlert.message ? "\n" + emergencyAlert.message : ""}`);
-  });
   photoChannel = GroupBackend.subscribePhotos(refreshGroupPhotoMarkers);
+  waypointChannel = GroupBackend.subscribeWaypoints(refreshGroupWaypointMarkers);
 }
 
 function deactivateSocial() {
   socialActive = false;
-  document.getElementById("btn-emergency").classList.add("hidden");
   stopLocationBroadcast();
   if (locationChannel) locationChannel.unsubscribe();
   if (chatChannel) chatChannel.unsubscribe();
-  if (emergencyChannel) emergencyChannel.unsubscribe();
   if (photoChannel) photoChannel.unsubscribe();
-  locationChannel = chatChannel = emergencyChannel = photoChannel = null;
+  if (waypointChannel) waypointChannel.unsubscribe();
+  locationChannel = chatChannel = photoChannel = waypointChannel = null;
   Object.values(memberLocationMarkers).forEach((m) => m.remove());
   memberLocationMarkers = {};
   Object.values(groupPhotoMarkers).forEach((m) => m.remove());
   groupPhotoMarkers = {};
+  Object.values(groupWaypointMarkers).forEach((m) => m.remove());
+  groupWaypointMarkers = {};
 }
 
 function renderAuthPanel() {
@@ -1954,33 +2038,6 @@ function stopLocationBroadcast() {
     locationBroadcastWatchId = null;
   }
 }
-
-document.getElementById("btn-emergency").addEventListener("click", async () => {
-  if (!session) return;
-  if (!confirm("Send an emergency alert to everyone right now?")) return;
-  navigator.geolocation.getCurrentPosition(
-    async (pos) => {
-      try {
-        await GroupBackend.raiseEmergency({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          message: "",
-        });
-        alert("Emergency alert sent.");
-      } catch (err) {
-        alert("Could not send alert: " + err.message);
-      }
-    },
-    async () => {
-      try {
-        await GroupBackend.raiseEmergency({ lat: null, lng: null, message: "" });
-        alert("Emergency alert sent (location unavailable).");
-      } catch (err) {
-        alert("Could not send alert: " + err.message);
-      }
-    }
-  );
-});
 
 // ---------- Init ----------
 if (usingOnlineBasemap) {

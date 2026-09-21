@@ -1,5 +1,5 @@
-// Group features (accounts, shared waypoints/trails, live location, chat,
-// emergency alerts) need a Supabase project — Trailmark can't create one
+// Group features (accounts, shared waypoints/trails, live location, chat)
+// need a Supabase project — Trailmark can't create one
 // for you, but it's free and takes a few minutes:
 //
 // 1. Go to https://supabase.com, sign up, "New project" (free tier).

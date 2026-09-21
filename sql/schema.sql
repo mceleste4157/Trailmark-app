@@ -6,7 +6,7 @@
 --
 -- Design: there is no "group" concept. Every signed-in user shares one
 -- space — anyone who creates an account sees everyone else's live
--- location, chat, shared waypoints/trails/photos, and emergency alerts.
+-- location, chat, and shared waypoints/trails/photos.
 -- Local-only features (map, GPS recording, offline maps, local waypoints
 -- and photos) never need an account at all; RLS below only gates the
 -- shared/social tables, restricted to authenticated users in general and
@@ -32,6 +32,9 @@ drop table if exists group_messages cascade;
 drop table if exists group_members cascade;
 drop table if exists groups cascade;
 drop function if exists is_group_member(uuid);
+
+-- ---------- Drop emergency alerts (SOS feature removed) ----------
+drop table if exists emergency_alerts cascade;
 
 -- ---------- Profiles ----------
 -- Supabase Auth already has auth.users; this adds the display name field
@@ -219,34 +222,6 @@ create policy "users can update their own location"
   on locations for update
   using (auth.uid() = user_id);
 
--- ---------- Emergency alerts ----------
-create table if not exists emergency_alerts (
-  id uuid primary key default uuid_generate_v4(),
-  raised_by uuid not null references auth.users(id),
-  lat double precision,
-  lng double precision,
-  message text default '',
-  created_at timestamptz not null default now(),
-  resolved_at timestamptz
-);
-
-alter table emergency_alerts enable row level security;
-
-drop policy if exists "authenticated users can read emergency alerts" on emergency_alerts;
-create policy "authenticated users can read emergency alerts"
-  on emergency_alerts for select
-  using (auth.role() = 'authenticated');
-
-drop policy if exists "authenticated users can raise an emergency alert" on emergency_alerts;
-create policy "authenticated users can raise an emergency alert"
-  on emergency_alerts for insert
-  with check (auth.role() = 'authenticated' and auth.uid() = raised_by);
-
-drop policy if exists "raiser can mark their alert resolved" on emergency_alerts;
-create policy "raiser can mark their alert resolved"
-  on emergency_alerts for update
-  using (auth.uid() = raised_by);
-
 -- ---------- Chat ----------
 create table if not exists messages (
   id uuid primary key default uuid_generate_v4(),
@@ -279,11 +254,14 @@ begin
   if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'messages') then
     alter publication supabase_realtime add table messages;
   end if;
-  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'emergency_alerts') then
-    alter publication supabase_realtime add table emergency_alerts;
-  end if;
   if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'shared_photos') then
     alter publication supabase_realtime add table shared_photos;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'shared_waypoints') then
+    alter publication supabase_realtime add table shared_waypoints;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'shared_trails') then
+    alter publication supabase_realtime add table shared_trails;
   end if;
 end $$;
 

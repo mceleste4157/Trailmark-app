@@ -94,28 +94,6 @@ html, body {
   cursor: pointer;
 }
 
-#btn-emergency {
-  position: absolute;
-  z-index: 15;
-  left: 14px;
-  bottom: 100px;
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: var(--danger);
-  color: white;
-  border: 3px solid rgba(255, 255, 255, 0.25);
-  font-weight: 800;
-  font-size: 13px;
-  letter-spacing: 0.03em;
-  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.5);
-  cursor: pointer;
-}
-
-#btn-emergency.hidden {
-  display: none;
-}
-
 #map-hint.hidden {
   display: none;
 }
