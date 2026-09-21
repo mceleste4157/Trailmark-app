@@ -11,6 +11,25 @@ maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile);
 // since this isn't cached for offline access.
 const ONLINE_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 
+// Esri World Imagery — free satellite basemap, no API key or billing
+// account required (unlike Google Maps, which needs a paid Cloud billing
+// account past a small monthly credit). Online-only, same as the streets
+// basemap above; not cached for offline use.
+const SATELLITE_STYLE = {
+  version: 8,
+  sources: {
+    "esri-satellite": {
+      type: "raster",
+      tiles: [
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      ],
+      tileSize: 256,
+      attribution: "Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+    },
+  },
+  layers: [{ id: "esri-satellite-layer", type: "raster", source: "esri-satellite" }],
+};
+
 const OFFLINE_FALLBACK_STYLE = {
   version: 8,
   sources: {},
@@ -54,6 +73,38 @@ map.addControl(
   }),
   "bottom-right"
 );
+
+// ---------- Basemap toggle (streets / satellite) ----------
+let currentBasemap = usingOnlineBasemap ? "streets" : "offline";
+let activeRegionObjects = []; // regions currently activated, re-applied after every style switch
+
+function switchBasemap(kind) {
+  if (kind === currentBasemap) return;
+  if (kind === "satellite" && !navigator.onLine) {
+    alert("Satellite imagery needs an internet connection — it isn't downloaded for offline use.");
+    return;
+  }
+  currentBasemap = kind;
+  map.setStyle(kind === "satellite" ? SATELLITE_STYLE : ONLINE_STYLE_URL);
+  updateBasemapToggleLabel();
+}
+
+function updateBasemapToggleLabel() {
+  const btn = document.getElementById("btn-basemap");
+  if (!btn) return;
+  btn.textContent = currentBasemap === "satellite" ? "🛰️ Satellite" : "🗺️ Streets";
+}
+
+document.getElementById("btn-basemap")?.addEventListener("click", () => {
+  switchBasemap(currentBasemap === "satellite" ? "streets" : "satellite");
+});
+
+// A style.load fires after every map.setStyle() call (including the
+// first, initial one) — re-add whatever offline regions were active,
+// since setStyle wipes all custom sources/layers.
+map.on("style.load", () => {
+  activeRegionObjects.forEach((region) => activateRegion(region));
+});
 
 let trailSourceCounter = 0;
 let activeWaypointMarkers = [];
@@ -312,6 +363,9 @@ async function openRegionsPanel() {
 // property) and won't render right here — regenerate it with the CI
 // workflow to get this schema instead.
 function activateRegion(region) {
+  if (!activeRegionObjects.some((r) => r.name === region.name)) {
+    activeRegionObjects.push(region);
+  }
   const sourceId = `region-${region.name}`;
   if (map.getSource(sourceId)) return;
   document.getElementById("map-hint").classList.add("hidden");

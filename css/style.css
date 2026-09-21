@@ -102,6 +102,23 @@ html, body {
 #status-pill.online { color: var(--accent-bright); border-color: var(--accent-bright); }
 #status-pill.offline { color: var(--warn); border-color: var(--warn); }
 
+#topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+#btn-basemap {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+}
+
 #toolbar {
   position: absolute;
   bottom: 0;
