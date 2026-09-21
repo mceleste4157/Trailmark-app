@@ -72,6 +72,24 @@
       ],
       "minZoom": 0,
       "maxZoom": 14
+    },
+    {
+      "name": "sipsey-wilderness-al",
+      "label": "Sipsey Wilderness / Bankhead National Forest (AL)",
+      "file": "sipsey-wilderness-al.pmtiles",
+      "attribution": "Data © OpenStreetMap contributors, ODbL. Built from geofabrik.de/north-america/us/alabama.",
+      "center": [
+        -87.6181128,
+        34.1774152
+      ],
+      "bounds": [
+        -88.6544766,
+        33.6368521,
+        -86.581749,
+        34.7179783
+      ],
+      "minZoom": 0,
+      "maxZoom": 14
     }
   ]
 }
