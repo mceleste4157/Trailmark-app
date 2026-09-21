@@ -4,7 +4,14 @@ import * as maplibregl from "../vendor/maplibre-gl/maplibre-gl.mjs";
 const pmtilesProtocol = new pmtiles.Protocol();
 maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile);
 
-const DEFAULT_STYLE = {
+// OpenFreeMap (https://openfreemap.org) — a free, no-API-key, no-usage-limit
+// hosted basemap, used only while online. It's what makes the map show a
+// normal world/US view by default instead of a blank screen; offline use
+// still depends entirely on downloaded regions (see js/offline-regions.js),
+// since this isn't cached for offline access.
+const ONLINE_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
+
+const OFFLINE_FALLBACK_STYLE = {
   version: 8,
   sources: {},
   layers: [
@@ -16,12 +23,27 @@ const DEFAULT_STYLE = {
   ],
 };
 
+const usingOnlineBasemap = navigator.onLine;
+
 const map = new maplibregl.Map({
   container: "map",
-  style: DEFAULT_STYLE,
+  style: usingOnlineBasemap ? ONLINE_STYLE_URL : OFFLINE_FALLBACK_STYLE,
   center: [-84.39, 33.75], // roughly central southeast (Atlanta area)
   zoom: 6,
   attributionControl: true,
+});
+// If the online style URL itself fails to load (host down, no real
+// connectivity despite navigator.onLine), fall back rather than leaving
+// the map stuck mid-load with no explanation.
+let onlineStyleFailed = false;
+map.on("error", (e) => {
+  const isStyleLoadError = usingOnlineBasemap && !onlineStyleFailed && !map.isStyleLoaded();
+  if (isStyleLoadError) {
+    onlineStyleFailed = true;
+    console.warn("Online basemap failed to load, falling back to offline style:", e.error);
+    map.setStyle(OFFLINE_FALLBACK_STYLE);
+    document.getElementById("map-hint").classList.remove("hidden");
+  }
 });
 map.addControl(new maplibregl.NavigationControl(), "bottom-right");
 map.addControl(
@@ -452,6 +474,9 @@ function showTrailOnMap(trail) {
 }
 
 // ---------- Init ----------
+if (usingOnlineBasemap) {
+  document.getElementById("map-hint").classList.add("hidden");
+}
 map.on("load", async () => {
   await refreshWaypointMarkers();
   await restoreDownloadedRegions();
