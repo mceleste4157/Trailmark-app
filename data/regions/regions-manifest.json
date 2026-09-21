@@ -90,6 +90,24 @@
       ],
       "minZoom": 0,
       "maxZoom": 14
+    },
+    {
+      "name": "ocala-national-forest-fl",
+      "label": "Ocala National Forest / Florida Trail (FL)",
+      "file": "ocala-national-forest-fl.pmtiles",
+      "attribution": "Data © OpenStreetMap contributors, ODbL. Built from geofabrik.de/north-america/us/florida.",
+      "center": [
+        -81.8240078,
+        29.2120693
+      ],
+      "bounds": [
+        -82.3251367,
+        28.4997648,
+        -81.3228789,
+        29.9243739
+      ],
+      "minZoom": 0,
+      "maxZoom": 14
     }
   ]
 }
