@@ -1,4 +1,11 @@
 {
-  "current": "1.00",
-  "history": []
+  "current": "1.01",
+  "history": [
+    {
+      "version": "1.01",
+      "date": "2026-09-21",
+      "summary": "Add version history and a tap-to-update banner (no more hard refresh)",
+      "commit": "c52ef3b"
+    }
+  ]
 }
