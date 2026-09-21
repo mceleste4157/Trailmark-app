@@ -65,14 +65,16 @@ map.on("error", (e) => {
   }
 });
 map.addControl(new maplibregl.NavigationControl(), "bottom-right");
-map.addControl(
-  new maplibregl.GeolocateControl({
-    positionOptions: { enableHighAccuracy: true },
-    trackUserLocation: true,
-    showUserHeading: true,
-  }),
-  "bottom-right"
-);
+const geolocateControl = new maplibregl.GeolocateControl({
+  positionOptions: { enableHighAccuracy: true },
+  trackUserLocation: true,
+  showUserHeading: true,
+});
+map.addControl(geolocateControl, "bottom-right");
+// Show the "you are here" dot immediately instead of waiting for the
+// user to tap the control — trigger() both requests permission and
+// starts tracking (trackUserLocation: true keeps it live afterward).
+map.on("load", () => geolocateControl.trigger());
 
 // ---------- Basemap toggle (streets / satellite) ----------
 let currentBasemap = usingOnlineBasemap ? "streets" : "offline";
@@ -106,7 +108,78 @@ map.on("style.load", () => {
   activeRegionObjects.forEach((region) => activateRegion(region));
   if (hillshadeOn) addHillshadeLayer();
   if (cellTowersOn) refreshCellTowerLayer().catch((err) => console.warn("Cell tower re-layer failed:", err));
+  drawBreadcrumbLine();
 });
+
+// ---------- Breadcrumb trail (passive "everywhere I've been") ----------
+// Distinct from Record: this runs continuously in the background whenever
+// the app is open (throttled to conserve battery/storage), building up a
+// permanent visual history across every visit — not one named session you
+// start and stop. Local-only for now (not shared to the group).
+const BREADCRUMB_SOURCE_ID = "breadcrumb-trail";
+let breadcrumbPoints = [];
+let breadcrumbWatchId = null;
+
+function breadcrumbGeoJSON() {
+  return {
+    type: "Feature",
+    geometry: { type: "LineString", coordinates: breadcrumbPoints.map((p) => [p.lng, p.lat]) },
+  };
+}
+
+function drawBreadcrumbLine() {
+  if (breadcrumbPoints.length < 2) return;
+  if (map.getSource(BREADCRUMB_SOURCE_ID)) {
+    map.getSource(BREADCRUMB_SOURCE_ID).setData(breadcrumbGeoJSON());
+    return;
+  }
+  map.addSource(BREADCRUMB_SOURCE_ID, { type: "geojson", data: breadcrumbGeoJSON() });
+  // Insert below waypoint/trail markers but that's automatic (markers are
+  // DOM elements, not style layers) — just add normally.
+  map.addLayer({
+    id: BREADCRUMB_SOURCE_ID,
+    type: "line",
+    source: BREADCRUMB_SOURCE_ID,
+    layout: { "line-join": "round", "line-cap": "round" },
+    paint: { "line-color": "#e2e8f0", "line-width": 2, "line-opacity": 0.5, "line-dasharray": [1, 2] },
+  });
+}
+
+function startBreadcrumbTracking() {
+  if (!("geolocation" in navigator) || breadcrumbWatchId !== null) return;
+  let lastSaved = 0;
+  let lastPoint = null;
+  breadcrumbWatchId = navigator.geolocation.watchPosition(
+    async (pos) => {
+      const now = Date.now();
+      const point = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      // Throttle: at most every 20s, and only if we've actually moved
+      // (avoids a dense cluster of points while parked).
+      if (now - lastSaved < 20000) return;
+      if (lastPoint && totalDistanceMeters([lastPoint, point]) < 15) return;
+      lastSaved = now;
+      lastPoint = point;
+      await BreadcrumbStore.addPoint(point.lat, point.lng);
+      breadcrumbPoints.push(point);
+      drawBreadcrumbLine();
+    },
+    (err) => console.warn("Breadcrumb GPS error:", err.message),
+    { enableHighAccuracy: false, maximumAge: 15000 }
+  );
+}
+
+async function initBreadcrumbTrail() {
+  breadcrumbPoints = await BreadcrumbStore.allPoints();
+  drawBreadcrumbLine();
+  startBreadcrumbTracking();
+}
+
+async function clearBreadcrumbTrail() {
+  await BreadcrumbStore.clear();
+  breadcrumbPoints = [];
+  if (map.getLayer(BREADCRUMB_SOURCE_ID)) map.removeLayer(BREADCRUMB_SOURCE_ID);
+  if (map.getSource(BREADCRUMB_SOURCE_ID)) map.removeSource(BREADCRUMB_SOURCE_ID);
+}
 
 // ---------- Terrain hillshade (elevation relief) ----------
 // AWS Terrain Tiles (free, public, no API key — a standard, widely-used
@@ -813,6 +886,7 @@ function difficultyLabel(d) {
 
 async function openTrailsPanel() {
   const trails = await TrailStore.listTrails();
+  const breadcrumbCount = await BreadcrumbStore.count();
   const rows = trails
     .map(
       (t) => `
@@ -832,7 +906,21 @@ async function openTrailsPanel() {
     )
     .join("");
 
-  openPanel("My Trails", rows || "<p>No saved trails yet. Tap Record to track one.</p>");
+  openPanel(
+    "My Trails",
+    `
+    <div class="region-item">
+      <div><div>Breadcrumb trail</div><small>${breadcrumbCount} points logged passively — everywhere you've been, not a named trail</small></div>
+      <button class="pill-btn danger" id="clear-breadcrumb-btn">Clear</button>
+    </div>
+    ${rows || "<p>No saved trails yet. Tap Record to track one.</p>"}
+    `
+  );
+  document.getElementById("clear-breadcrumb-btn").addEventListener("click", async () => {
+    if (!confirm(`Clear all ${breadcrumbCount} breadcrumb points? This can't be undone.`)) return;
+    await clearBreadcrumbTrail();
+    openTrailsPanel();
+  });
 
   panelBody.querySelectorAll(".trail-item button").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
@@ -1352,6 +1440,7 @@ if (usingOnlineBasemap) {
 map.on("load", async () => {
   await refreshWaypointMarkers();
   await restoreDownloadedRegions();
+  await initBreadcrumbTrail();
 });
 
 if ("serviceWorker" in navigator) {

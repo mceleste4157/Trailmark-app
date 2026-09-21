@@ -1,7 +1,7 @@
 // Caches the app shell so Trailmark loads with zero connectivity.
 // Map tile (.pmtiles) requests use a separate cache managed by
 // js/offline-regions.js, keyed by the region download flow.
-const SHELL_CACHE = "trailmark-shell-v3";
+const SHELL_CACHE = "trailmark-shell-v4";
 const TILES_CACHE = "trailmark-tiles";
 
 const SHELL_ASSETS = [

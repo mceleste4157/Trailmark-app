@@ -12,6 +12,18 @@ db.version(1).stores({
   regions: "++id, &name, downloadedAt",
 });
 
+db.version(2).stores({
+  trails: "++id, name, createdAt",
+  waypoints: "++id, name, createdAt",
+  regions: "++id, &name, downloadedAt",
+  // Passive "everywhere I've been" trail — separate from an explicit
+  // Record session. Always accumulates in the background (throttled)
+  // whenever the app is open and location is available, so you can see
+  // at a glance which trails/routes you've already driven, across every
+  // visit, not just one recorded session.
+  breadcrumbs: "++id, t",
+});
+
 const TrailStore = {
   async saveTrail({ name, kind, points, distanceMeters, startedAt, endedAt, difficulty }) {
     return db.trails.add({
@@ -58,6 +70,21 @@ const WaypointStore = {
   },
   async deleteWaypoint(id) {
     return db.waypoints.delete(id);
+  },
+};
+
+const BreadcrumbStore = {
+  async addPoint(lat, lng) {
+    return db.breadcrumbs.add({ lat, lng, t: Date.now() });
+  },
+  async allPoints() {
+    return db.breadcrumbs.orderBy("t").toArray();
+  },
+  async count() {
+    return db.breadcrumbs.count();
+  },
+  async clear() {
+    return db.breadcrumbs.clear();
   },
 };
 
