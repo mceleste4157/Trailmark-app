@@ -6,10 +6,36 @@
       "label": "Florence, Italy (bundled test fixture)",
       "file": "firenze-test.pmtiles",
       "attribution": "Data © OpenStreetMap contributors, ODbL. Fixture from protomaps/PMTiles.",
-      "center": [11.2543435, 43.7672134],
-      "bounds": [11.221144, 43.745121, 11.287543, 43.789306],
+      "center": [
+        11.2543435,
+        43.7672134
+      ],
+      "bounds": [
+        11.221144,
+        43.745121,
+        11.287543,
+        43.789306
+      ],
       "minZoom": 0,
       "maxZoom": 15
+    },
+    {
+      "name": "north-georgia-mountains",
+      "label": "North Georgia Mountains (Blood Mountain / Chattahoochee NF)",
+      "file": "north-georgia-mountains.pmtiles",
+      "attribution": "Data © OpenStreetMap contributors, ODbL. Built from geofabrik.de/north-america/us/georgia.",
+      "center": [
+        -83.9875197,
+        34.7514416
+      ],
+      "bounds": [
+        -84.6188307,
+        34.3417079,
+        -83.3562088,
+        35.1611752
+      ],
+      "minZoom": 0,
+      "maxZoom": 14
     }
   ]
 }
