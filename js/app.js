@@ -52,17 +52,21 @@ const usingOnlineBasemap = true;
 
 const map = new maplibregl.Map({
   container: "map",
-  style: usingOnlineBasemap ? ONLINE_STYLE_URL : OFFLINE_FALLBACK_STYLE,
+  style: usingOnlineBasemap ? SATELLITE_STYLE : OFFLINE_FALLBACK_STYLE,
   center: [-84.39, 33.75], // roughly central southeast (Atlanta area)
   zoom: 6,
   attributionControl: true,
 });
 // If the online style URL itself fails to load (host down, no real
 // connectivity despite navigator.onLine), fall back rather than leaving
-// the map stuck mid-load with no explanation.
+// the map stuck mid-load with no explanation. Satellite imagery has no
+// "style.json" of its own to fail (it's a plain raster source defined
+// inline, see SATELLITE_STYLE) so there's nothing to catch here for it —
+// this only matters once something calls switchBasemap("streets").
 let onlineStyleFailed = false;
 map.on("error", (e) => {
-  const isStyleLoadError = usingOnlineBasemap && !onlineStyleFailed && !map.isStyleLoaded();
+  const isStyleLoadError =
+    usingOnlineBasemap && currentBasemap === "streets" && !onlineStyleFailed && !map.isStyleLoaded();
   if (isStyleLoadError) {
     onlineStyleFailed = true;
     console.warn("Online basemap failed to load, falling back to offline style:", e.error);
@@ -104,7 +108,8 @@ locateBanner.addEventListener("click", () => geolocateControl.trigger());
 map.on("load", () => geolocateControl.trigger());
 
 // ---------- Basemap toggle (streets / satellite) ----------
-let currentBasemap = usingOnlineBasemap ? "streets" : "offline";
+// Satellite is the default view.
+let currentBasemap = usingOnlineBasemap ? "satellite" : "offline";
 let activeRegionObjects = []; // regions currently activated, re-applied after every style switch
 
 function switchBasemap(kind) {
@@ -123,6 +128,7 @@ function updateBasemapToggleLabel() {
   if (!btn) return;
   btn.textContent = currentBasemap === "satellite" ? "🛰️ Satellite" : "🗺️ Streets";
 }
+updateBasemapToggleLabel();
 
 document.getElementById("btn-basemap")?.addEventListener("click", () => {
   switchBasemap(currentBasemap === "satellite" ? "streets" : "satellite");
@@ -668,16 +674,28 @@ document.getElementById("btn-planning-finish").addEventListener("click", async (
 // ---------- Custom area download ("select an area on the map") ----------
 // Downloads the actual online basemap's tiles for whatever you're looking
 // at — not limited to a fixed list of pre-picked regions. Works for any
-// area: an ORV park, a specific trailhead, wherever. Reads the tile URL
-// template from the live map's own already-loaded style (no hardcoded
-// host — adapts automatically if the basemap provider ever changes it),
-// then fetches every tile in the bounding box across a zoom range; the
-// service worker (sw.js) caches each one as it's fetched.
-function getOnlineVectorTileTemplate() {
-  const style = map.getStyle();
+// area: an ORV park, a specific trailhead, wherever. The vector trail/road
+// data always comes from the streets style regardless of which basemap
+// you're currently viewing (satellite is just raster imagery — no trail
+// data to download from it), so this fetches ONLINE_STYLE_URL directly
+// rather than reading whatever the map currently has loaded. No hardcoded
+// tile host — reads whatever URL that style.json actually specifies, so
+// it adapts automatically if the provider ever changes it.
+let cachedVectorTileTemplate = null;
+async function getOnlineVectorTileTemplate() {
+  if (cachedVectorTileTemplate) return cachedVectorTileTemplate;
+  let style;
+  try {
+    const res = await fetch(ONLINE_STYLE_URL);
+    if (!res.ok) return null;
+    style = await res.json();
+  } catch {
+    return null; // network unreachable — caller shows a clear message
+  }
   for (const source of Object.values(style.sources || {})) {
     if (source.type === "vector" && source.tiles && source.tiles.length) {
-      return source.tiles[0];
+      cachedVectorTileTemplate = source.tiles[0];
+      return cachedVectorTileTemplate;
     }
   }
   return null;
@@ -706,18 +724,30 @@ function tilesForBounds(bounds, minZoom, maxZoom) {
 }
 
 async function downloadCustomArea(name, bounds, minZoom, maxZoom, onProgress) {
-  const template = getOnlineVectorTileTemplate();
-  if (!template) throw new Error("Online basemap isn't loaded — go online first, then try again.");
+  const template = await getOnlineVectorTileTemplate();
+  if (!template) throw new Error("Could not load the online basemap's style — go online first, then try again.");
   const tiles = tilesForBounds(bounds, minZoom, maxZoom);
   let done = 0;
   const CONCURRENCY = 8;
   let cursor = 0;
+  // Write to Cache Storage directly rather than relying on the service
+  // worker's own fetch interception to do it opportunistically: a service
+  // worker doesn't necessarily control the page yet on a first visit (its
+  // own clients.claim() call doesn't synchronously flip
+  // navigator.serviceWorker.controller — confirmed in testing: `active:
+  // true, controller: false` right after the very first load), so tiles
+  // fetched right after a first-time page load could silently bypass
+  // caching entirely. Writing directly here guarantees it regardless —
+  // and it's the same cache name the SW's own fetch handler checks first,
+  // so both paths share one source of truth.
+  const tileCache = await caches.open("trailmark-online-tiles");
   async function worker() {
     while (cursor < tiles.length) {
       const [z, x, y] = tiles[cursor++];
       const url = template.replace("{z}", z).replace("{x}", x).replace("{y}", y);
       try {
-        await fetch(url); // service worker caches this on the way through
+        const response = await fetch(url);
+        if (response.ok) await tileCache.put(url, response);
       } catch (err) {
         console.warn("Tile fetch failed (skipping):", url, err.message);
       }
