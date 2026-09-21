@@ -1,6 +1,8 @@
-// Thin wrapper around the Supabase client for every group feature: auth,
-// groups, shared waypoints/trails (with photos + ratings), live location,
-// chat, and emergency alerts. See sql/schema.sql for the tables/policies
+// Thin wrapper around the Supabase client for every shared/social feature:
+// auth, shared waypoints/trails (with photos + ratings), live location,
+// chat, and emergency alerts. There's no "group" concept — every signed-in
+// user shares one space, scoped only by auth.uid() for writes and
+// "authenticated" for reads. See sql/schema.sql for the tables/policies
 // this talks to, and js/group/config.js for how to activate it.
 //
 // If Supabase isn't configured, `GroupBackend.enabled` is false and every
@@ -17,9 +19,6 @@ const GroupBackend = (() => {
       signUp: disabled,
       signIn: disabled,
       signOut: disabled,
-      myGroups: disabled,
-      createGroup: disabled,
-      joinGroup: disabled,
       createFolder: disabled,
       listFolders: disabled,
       addWaypoint: disabled,
@@ -47,13 +46,6 @@ const GroupBackend = (() => {
   }
 
   const client = supabase.createClient(GroupConfig.url, GroupConfig.anonKey);
-
-  function inviteCode() {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I ambiguity
-    let code = "";
-    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
-    return code;
-  }
 
   function currentUserId() {
     return client.auth.getUser().then(({ data }) => data.user?.id);
@@ -89,78 +81,33 @@ const GroupBackend = (() => {
     client.auth.onAuthStateChange((_event, session) => callback(session));
   }
 
-  // ---------- Groups ----------
-  async function createGroup(name) {
-    const uid = await currentUserId();
-    if (!uid) throw new Error("Sign in first.");
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const code = inviteCode();
-      const { data, error } = await client
-        .from("groups")
-        .insert({ name, invite_code: code, created_by: uid })
-        .select()
-        .single();
-      if (!error) {
-        await client.from("group_members").insert({ group_id: data.id, user_id: uid, role: "owner" });
-        return data;
-      }
-      if (error.code !== "23505") throw error; // 23505 = unique_violation on invite_code, retry
-    }
-    throw new Error("Could not generate a unique invite code — try again.");
-  }
-
-  async function joinGroup(code) {
-    const uid = await currentUserId();
-    if (!uid) throw new Error("Sign in first.");
-    const { data: group, error: findError } = await client
-      .from("groups")
-      .select()
-      .eq("invite_code", code.trim().toUpperCase())
-      .single();
-    if (findError || !group) throw new Error("No group found with that invite code.");
-    const { error } = await client.from("group_members").insert({ group_id: group.id, user_id: uid });
-    if (error && error.code !== "23505") throw error; // already a member is fine
-    return group;
-  }
-
-  async function myGroups() {
-    const { data, error } = await client.from("groups").select("*, group_members!inner(role)").order("created_at");
-    if (error) throw error;
-    return data;
-  }
-
   // ---------- Trip folders ----------
-  async function createFolder(groupId, name, description) {
+  async function createFolder(name, description) {
     const uid = await currentUserId();
     const { data, error } = await client
-      .from("group_trip_folders")
-      .insert({ group_id: groupId, created_by: uid, name, description: description || "" })
+      .from("folders")
+      .insert({ created_by: uid, name, description: description || "" })
       .select()
       .single();
     if (error) throw error;
     return data;
   }
 
-  async function listFolders(groupId) {
-    const { data, error } = await client
-      .from("group_trip_folders")
-      .select()
-      .eq("group_id", groupId)
-      .order("created_at", { ascending: false });
+  async function listFolders() {
+    const { data, error } = await client.from("folders").select().order("created_at", { ascending: false });
     if (error) throw error;
     return data;
   }
 
   // ---------- Shared waypoints ----------
   // category: 'trailhead' | 'campsite' | 'fuel' | 'water_crossing' | 'obstacle' | 'hazard' | 'other'
-  async function addWaypoint(groupId, { name, note, lat, lng, category, folderId, photoFile }) {
+  async function addWaypoint({ name, note, lat, lng, category, folderId, photoFile }) {
     const uid = await currentUserId();
     let photo_path = null;
-    if (photoFile) photo_path = await uploadPhoto(groupId, photoFile);
+    if (photoFile) photo_path = await uploadPhoto(photoFile);
     const { data, error } = await client
-      .from("group_waypoints")
+      .from("shared_waypoints")
       .insert({
-        group_id: groupId,
         created_by: uid,
         name,
         note: note || "",
@@ -176,25 +123,20 @@ const GroupBackend = (() => {
     return data;
   }
 
-  async function listWaypoints(groupId) {
-    const { data, error } = await client
-      .from("group_waypoints")
-      .select()
-      .eq("group_id", groupId)
-      .order("created_at", { ascending: false });
+  async function listWaypoints() {
+    const { data, error } = await client.from("shared_waypoints").select().order("created_at", { ascending: false });
     if (error) throw error;
     return data;
   }
 
   // ---------- Shared trails ----------
-  async function addTrail(groupId, { name, kind, points, distanceMeters, difficulty, folderId, photoFile }) {
+  async function addTrail({ name, kind, points, distanceMeters, difficulty, folderId, photoFile }) {
     const uid = await currentUserId();
     let photo_path = null;
-    if (photoFile) photo_path = await uploadPhoto(groupId, photoFile);
+    if (photoFile) photo_path = await uploadPhoto(photoFile);
     const { data, error } = await client
-      .from("group_trails")
+      .from("shared_trails")
       .insert({
-        group_id: groupId,
         created_by: uid,
         name,
         kind: kind || "recorded",
@@ -212,41 +154,37 @@ const GroupBackend = (() => {
 
   async function setTrailRating(trailId, rating) {
     // rating: 'favorite' | 'bad' | null
-    const { error } = await client.from("group_trails").update({ rating }).eq("id", trailId);
+    const { error } = await client.from("shared_trails").update({ rating }).eq("id", trailId);
     if (error) throw error;
   }
 
   async function setTrailDifficulty(trailId, difficulty) {
     // difficulty: 1-10 or null
-    const { error } = await client.from("group_trails").update({ difficulty }).eq("id", trailId);
+    const { error } = await client.from("shared_trails").update({ difficulty }).eq("id", trailId);
     if (error) throw error;
   }
 
-  async function listTrails(groupId) {
-    const { data, error } = await client
-      .from("group_trails")
-      .select()
-      .eq("group_id", groupId)
-      .order("created_at", { ascending: false });
+  async function listTrails() {
+    const { data, error } = await client.from("shared_trails").select().order("created_at", { ascending: false });
     if (error) throw error;
     return data;
   }
 
   async function assignWaypointFolder(waypointId, folderId) {
-    const { error } = await client.from("group_waypoints").update({ folder_id: folderId }).eq("id", waypointId);
+    const { error } = await client.from("shared_waypoints").update({ folder_id: folderId }).eq("id", waypointId);
     if (error) throw error;
   }
 
   async function assignTrailFolder(trailId, folderId) {
-    const { error } = await client.from("group_trails").update({ folder_id: folderId }).eq("id", trailId);
+    const { error } = await client.from("shared_trails").update({ folder_id: folderId }).eq("id", trailId);
     if (error) throw error;
   }
 
   // ---------- Photos ----------
-  async function uploadPhoto(groupId, file) {
+  async function uploadPhoto(file) {
     const uid = await currentUserId();
     const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-    const path = `${groupId}/${uid}-${Date.now()}.${ext}`;
+    const path = `${uid}/${Date.now()}.${ext}`;
     const { error } = await client.storage.from("trail-photos").upload(path, file);
     if (error) throw error;
     return path;
@@ -260,116 +198,102 @@ const GroupBackend = (() => {
 
   // ---------- Shared photos (snap-and-tag, standalone — see js/app.js's
   // toolbar Photo button) ----------
-  async function addPhoto(groupId, { lat, lng, note, photoFile }) {
+  async function addPhoto({ lat, lng, note, photoFile }) {
     const uid = await currentUserId();
-    const photo_path = await uploadPhoto(groupId, photoFile);
+    const photo_path = await uploadPhoto(photoFile);
     const { data, error } = await client
-      .from("group_photos")
-      .insert({ group_id: groupId, created_by: uid, lat, lng, note: note || "", photo_path })
+      .from("shared_photos")
+      .insert({ created_by: uid, lat, lng, note: note || "", photo_path })
       .select()
       .single();
     if (error) throw error;
     return data;
   }
 
-  async function listPhotos(groupId) {
+  async function listPhotos() {
     const { data, error } = await client
-      .from("group_photos")
+      .from("shared_photos")
       .select("*, profiles(display_name)")
-      .eq("group_id", groupId)
       .order("created_at", { ascending: false });
     if (error) throw error;
     return data;
   }
 
-  function subscribePhotos(groupId, onUpdate) {
-    listPhotos(groupId).then((data) => data && onUpdate(data));
+  function subscribePhotos(onUpdate) {
+    listPhotos().then((data) => data && onUpdate(data));
     return client
-      .channel(`photos-${groupId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "group_photos", filter: `group_id=eq.${groupId}` },
-        () => listPhotos(groupId).then((data) => data && onUpdate(data))
+      .channel("shared-photos")
+      .on("postgres_changes", { event: "*", schema: "public", table: "shared_photos" }, () =>
+        listPhotos().then((data) => data && onUpdate(data))
       )
       .subscribe();
   }
 
   async function deletePhoto(photoId) {
-    const { error } = await client.from("group_photos").delete().eq("id", photoId);
+    const { error } = await client.from("shared_photos").delete().eq("id", photoId);
     if (error) throw error;
   }
 
   // ---------- Live location ----------
-  async function updateMyLocation(groupId, lat, lng) {
+  async function updateMyLocation(lat, lng) {
     const uid = await currentUserId();
     const { error } = await client
-      .from("group_locations")
-      .upsert({ group_id: groupId, user_id: uid, lat, lng, updated_at: new Date().toISOString() });
+      .from("locations")
+      .upsert({ user_id: uid, lat, lng, updated_at: new Date().toISOString() });
     if (error) throw error;
   }
 
-  function subscribeLocations(groupId, onUpdate) {
+  function subscribeLocations(onUpdate) {
     client
-      .from("group_locations")
+      .from("locations")
       .select("*, profiles(display_name)")
-      .eq("group_id", groupId)
       .then(({ data }) => data && onUpdate(data));
 
     return client
-      .channel(`locations-${groupId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "group_locations", filter: `group_id=eq.${groupId}` },
-        () => {
-          client
-            .from("group_locations")
-            .select("*, profiles(display_name)")
-            .eq("group_id", groupId)
-            .then(({ data }) => data && onUpdate(data));
-        }
-      )
+      .channel("locations")
+      .on("postgres_changes", { event: "*", schema: "public", table: "locations" }, () => {
+        client
+          .from("locations")
+          .select("*, profiles(display_name)")
+          .then(({ data }) => data && onUpdate(data));
+      })
       .subscribe();
   }
 
   // ---------- Chat ----------
-  async function sendMessage(groupId, body) {
+  async function sendMessage(body) {
     const uid = await currentUserId();
-    const { error } = await client.from("group_messages").insert({ group_id: groupId, user_id: uid, body });
+    const { error } = await client.from("messages").insert({ user_id: uid, body });
     if (error) throw error;
   }
 
-  function subscribeMessages(groupId, onMessage) {
+  function subscribeMessages(onMessage) {
     client
-      .from("group_messages")
+      .from("messages")
       .select("*, profiles(display_name)")
-      .eq("group_id", groupId)
       .order("created_at", { ascending: true })
       .limit(100)
       .then(({ data }) => data && data.forEach(onMessage));
 
     return client
-      .channel(`messages-${groupId}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "group_messages", filter: `group_id=eq.${groupId}` },
-        (payload) => {
-          client
-            .from("profiles")
-            .select("display_name")
-            .eq("id", payload.new.user_id)
-            .single()
-            .then(({ data }) => onMessage({ ...payload.new, profiles: data }));
-        }
-      )
+      .channel("messages")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
+        client
+          .from("profiles")
+          .select("display_name")
+          .eq("id", payload.new.user_id)
+          .single()
+          .then(({ data }) => onMessage({ ...payload.new, profiles: data }));
+      })
       .subscribe();
   }
 
   // ---------- Emergency ----------
-  async function raiseEmergency(groupId, { lat, lng, message }) {
+  async function raiseEmergency({ lat, lng, message }) {
     const uid = await currentUserId();
     const { data, error } = await client
-      .from("group_emergency_alerts")
-      .insert({ group_id: groupId, raised_by: uid, lat, lng, message: message || "" })
+      .from("emergency_alerts")
+      .insert({ raised_by: uid, lat, lng, message: message || "" })
       .select()
       .single();
     if (error) throw error;
@@ -378,19 +302,17 @@ const GroupBackend = (() => {
 
   async function resolveEmergency(alertId) {
     const { error } = await client
-      .from("group_emergency_alerts")
+      .from("emergency_alerts")
       .update({ resolved_at: new Date().toISOString() })
       .eq("id", alertId);
     if (error) throw error;
   }
 
-  function subscribeEmergency(groupId, onAlert) {
+  function subscribeEmergency(onAlert) {
     return client
-      .channel(`emergency-${groupId}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "group_emergency_alerts", filter: `group_id=eq.${groupId}` },
-        (payload) => onAlert(payload.new)
+      .channel("emergency-alerts")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "emergency_alerts" }, (payload) =>
+        onAlert(payload.new)
       )
       .subscribe();
   }
@@ -402,9 +324,6 @@ const GroupBackend = (() => {
     signUp,
     signIn,
     signOut,
-    myGroups,
-    createGroup,
-    joinGroup,
     createFolder,
     listFolders,
     addWaypoint,

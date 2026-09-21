@@ -275,7 +275,7 @@ map.on("style.load", () => {
 // Distinct from Record: this runs continuously in the background whenever
 // the app is open (throttled to conserve battery/storage), building up a
 // permanent visual history across every visit — not one named session you
-// start and stop. Local-only for now (not shared to the group).
+// start and stop. Local-only for now (not shared with the crew).
 const BREADCRUMB_SOURCE_ID = "breadcrumb-trail";
 let breadcrumbPoints = [];
 let breadcrumbWatchId = null;
@@ -660,15 +660,15 @@ photoInput.addEventListener("change", (e) => {
       const { latitude: lat, longitude: lng } = pos.coords;
       await PhotoStore.savePhoto({ lat, lng, note: "", blob: file });
       await refreshPhotoMarkers();
-      // Sharing is automatic while you're in a group — same as live
+      // Sharing is automatic while you're signed in — same as live
       // location — rather than a per-photo prompt breaking up the
       // snap-and-go flow.
-      if (activeGroup) {
+      if (session) {
         try {
-          await GroupBackend.addPhoto(activeGroup.id, { lat, lng, note: "", photoFile: file });
-          alert(`Photo saved and shared with ${activeGroup.name}.`);
+          await GroupBackend.addPhoto({ lat, lng, note: "", photoFile: file });
+          alert("Photo saved and shared with the crew.");
         } catch (err) {
-          alert("Photo saved locally, but couldn't share with the group: " + err.message);
+          alert("Photo saved locally, but couldn't share it: " + err.message);
         }
       } else {
         alert("Photo saved at your location.");
@@ -746,8 +746,8 @@ function openWaypointPanel() {
     <label>Note (optional)</label>
     <textarea id="wp-note" rows="2" placeholder="Notes..."></textarea>
     ${
-      activeGroup
-        ? `<label><input type="checkbox" id="wp-share" /> Share with ${escHtml(activeGroup.name)}</label>
+      session
+        ? `<label><input type="checkbox" id="wp-share" /> Share with the crew</label>
            <label>Photo (optional, shared waypoints only)</label>
            <input type="file" id="wp-photo" accept="image/*" />`
         : ""
@@ -764,11 +764,11 @@ function openWaypointPanel() {
     await refreshWaypointMarkers();
 
     const shareBox = document.getElementById("wp-share");
-    if (shareBox && shareBox.checked && activeGroup) {
+    if (shareBox && shareBox.checked && session) {
       const photoInput = document.getElementById("wp-photo");
       const photoFile = photoInput && photoInput.files[0] ? photoInput.files[0] : null;
       try {
-        await GroupBackend.addWaypoint(activeGroup.id, {
+        await GroupBackend.addWaypoint({
           name,
           note,
           lat: center.lat,
@@ -777,7 +777,7 @@ function openWaypointPanel() {
           photoFile,
         });
       } catch (err) {
-        alert("Saved locally, but could not share with group: " + err.message);
+        alert("Saved locally, but could not share it: " + err.message);
       }
     }
     closePanel();
@@ -1157,7 +1157,7 @@ async function openTrailsPanel() {
           <button class="pill-btn" data-action="rename">Rename</button>
           <button class="pill-btn" data-action="rate">Rate</button>
           <button class="pill-btn" data-action="export">GPX</button>
-          ${activeGroup ? '<button class="pill-btn" data-action="share">Share</button>' : ""}
+          ${session ? '<button class="pill-btn" data-action="share">Share</button>' : ""}
           <button class="pill-btn danger" data-action="delete">Delete</button>
         </div>
       </div>`
@@ -1242,14 +1242,14 @@ async function openTrailsPanel() {
       } else if (action === "share") {
         const trail = await TrailStore.getTrail(id);
         try {
-          await GroupBackend.addTrail(activeGroup.id, {
+          await GroupBackend.addTrail({
             name: trail.name,
             kind: trail.kind,
             points: trail.points,
             distanceMeters: trail.distanceMeters,
             difficulty: trail.difficulty,
           });
-          alert(`Shared "${trail.name}" with ${activeGroup.name}.`);
+          alert(`Shared "${trail.name}" with the crew.`);
         } catch (err) {
           alert("Could not share trail: " + err.message);
         }
@@ -1428,9 +1428,16 @@ function showTrailOnMap(trail) {
   map.fitBounds(bounds, { padding: 40 });
 }
 
-// ---------- Group (accounts, chat, live locations, emergency) ----------
+// ---------- Crew (accounts, chat, live locations, emergency) ----------
+// No "group" concept — every signed-in user shares one space (see
+// sql/schema.sql). `socialActive` tracks whether the realtime
+// subscriptions + location broadcast are currently running, which starts
+// the moment you sign in and open this panel, not automatically on a
+// silent session restore (avoids starting a GPS watch + realtime
+// connections in the background before you've actually opened the app's
+// social features).
 let session = null;
-let activeGroup = null;
+let socialActive = false;
 let memberLocationMarkers = {};
 let locationBroadcastWatchId = null;
 let chatChannel = null;
@@ -1444,18 +1451,18 @@ if (GroupBackend.enabled) {
     .then((s) => {
       session = s;
     })
-    .catch((err) => console.warn("Could not restore group session:", err));
+    .catch((err) => console.warn("Could not restore session:", err));
   GroupBackend.onAuthChange((s) => {
     session = s;
-    if (!s) leaveActiveGroup();
+    if (!s) deactivateSocial();
   });
 }
 
 async function openGroupPanel() {
   if (!GroupBackend.enabled) {
     openPanel(
-      "Group",
-      `<p style="color:var(--text-dim);font-size:13px;">Group features (chat, live locations, shared markers, emergency alerts) aren't set up yet — see js/group/config.js in the repo.</p>`
+      "Crew",
+      `<p style="color:var(--text-dim);font-size:13px;">Crew features (chat, live locations, shared markers, emergency alerts) aren't set up yet — see js/group/config.js in the repo.</p>`
     );
     return;
   }
@@ -1463,11 +1470,41 @@ async function openGroupPanel() {
     renderAuthPanel();
     return;
   }
-  if (!activeGroup) {
-    await renderGroupsListPanel();
-    return;
-  }
-  renderGroupDetailPanel();
+  activateSocial();
+  renderCrewPanel();
+}
+
+function activateSocial() {
+  if (socialActive) return;
+  socialActive = true;
+  document.getElementById("btn-emergency").classList.remove("hidden");
+  startLocationBroadcast();
+  locationChannel = GroupBackend.subscribeLocations(refreshMemberMarkers);
+  chatMessages = [];
+  chatChannel = GroupBackend.subscribeMessages((msg) => {
+    chatMessages.push(msg);
+    appendChatMessageIfOpen(msg);
+  });
+  emergencyChannel = GroupBackend.subscribeEmergency((emergencyAlert) => {
+    if (session && emergencyAlert.raised_by === session.user.id) return; // don't alarm the person who raised it
+    window.alert(`🆘 Emergency alert!${emergencyAlert.message ? "\n" + emergencyAlert.message : ""}`);
+  });
+  photoChannel = GroupBackend.subscribePhotos(refreshGroupPhotoMarkers);
+}
+
+function deactivateSocial() {
+  socialActive = false;
+  document.getElementById("btn-emergency").classList.add("hidden");
+  stopLocationBroadcast();
+  if (locationChannel) locationChannel.unsubscribe();
+  if (chatChannel) chatChannel.unsubscribe();
+  if (emergencyChannel) emergencyChannel.unsubscribe();
+  if (photoChannel) photoChannel.unsubscribe();
+  locationChannel = chatChannel = emergencyChannel = photoChannel = null;
+  Object.values(memberLocationMarkers).forEach((m) => m.remove());
+  memberLocationMarkers = {};
+  Object.values(groupPhotoMarkers).forEach((m) => m.remove());
+  groupPhotoMarkers = {};
 }
 
 function renderAuthPanel() {
@@ -1475,7 +1512,7 @@ function renderAuthPanel() {
     "Sign In",
     `
     <label>Display name</label>
-    <input id="auth-name" placeholder="What your group sees you as" />
+    <input id="auth-name" placeholder="What everyone sees you as" />
     <label>Email</label>
     <input id="auth-email" type="email" placeholder="you@example.com" />
     <label>Password</label>
@@ -1494,7 +1531,8 @@ function renderAuthPanel() {
       const password = document.getElementById("auth-password").value;
       await GroupBackend.signIn(email, password);
       session = await GroupBackend.getSession();
-      await renderGroupsListPanel();
+      activateSocial();
+      renderCrewPanel();
     } catch (err) {
       showError(err);
     }
@@ -1506,128 +1544,27 @@ function renderAuthPanel() {
       const password = document.getElementById("auth-password").value;
       await GroupBackend.signUp(email, password, name);
       session = await GroupBackend.getSession();
-      await renderGroupsListPanel();
+      activateSocial();
+      renderCrewPanel();
     } catch (err) {
       showError(err);
     }
   });
-}
-
-async function renderGroupsListPanel() {
-  let groups = [];
-  try {
-    groups = await GroupBackend.myGroups();
-  } catch (err) {
-    console.warn("Could not load groups:", err);
-  }
-  const rows = groups
-    .map(
-      (g) => `<div class="region-item" data-id="${g.id}">
-        <div><div>${escHtml(g.name)}</div><small>Invite code: ${escHtml(g.invite_code)}</small></div>
-        <button class="pill-btn" data-action="open">Open</button>
-      </div>`
-    )
-    .join("");
-
-  openPanel(
-    "My Groups",
-    `
-    ${rows || '<p style="color:var(--text-dim);font-size:13px;">No groups yet.</p>'}
-    <label>Create a new group</label>
-    <input id="new-group-name" placeholder="e.g. Weekend Warriors" />
-    <button class="primary" id="create-group-btn">Create Group</button>
-    <label>Join a group</label>
-    <input id="join-group-code" placeholder="6-character invite code" style="text-transform:uppercase;" />
-    <button class="primary" id="join-group-btn">Join Group</button>
-    <button class="primary" id="sign-out-btn" style="background:var(--panel);border:1px solid var(--border);margin-top:16px;">Sign Out</button>
-    <p id="group-error" style="color:var(--danger);font-size:13px;"></p>
-    `
-  );
-  const showError = (err) => {
-    document.getElementById("group-error").textContent = err.message || String(err);
-  };
-  panelBody.querySelectorAll('.region-item button[data-action="open"]').forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const id = btn.closest(".region-item").dataset.id;
-      const group = groups.find((g) => g.id === id);
-      await selectGroup(group);
-    });
-  });
-  document.getElementById("create-group-btn").addEventListener("click", async () => {
-    try {
-      const name = document.getElementById("new-group-name").value.trim();
-      if (!name) return;
-      const group = await GroupBackend.createGroup(name);
-      await selectGroup(group);
-    } catch (err) {
-      showError(err);
-    }
-  });
-  document.getElementById("join-group-btn").addEventListener("click", async () => {
-    try {
-      const code = document.getElementById("join-group-code").value.trim();
-      if (!code) return;
-      const group = await GroupBackend.joinGroup(code);
-      await selectGroup(group);
-    } catch (err) {
-      showError(err);
-    }
-  });
-  document.getElementById("sign-out-btn").addEventListener("click", async () => {
-    await GroupBackend.signOut();
-    session = null;
-    leaveActiveGroup();
-    closePanel();
-  });
-}
-
-async function selectGroup(group) {
-  activeGroup = group;
-  document.getElementById("btn-emergency").classList.remove("hidden");
-  startLocationBroadcast();
-  locationChannel = GroupBackend.subscribeLocations(group.id, refreshMemberMarkers);
-  chatMessages = [];
-  chatChannel = GroupBackend.subscribeMessages(group.id, (msg) => {
-    chatMessages.push(msg);
-    appendChatMessageIfOpen(msg);
-  });
-  emergencyChannel = GroupBackend.subscribeEmergency(group.id, (emergencyAlert) => {
-    if (emergencyAlert.raised_by === session.user.id) return; // don't alarm the person who raised it
-    window.alert(`🆘 Emergency alert from your group!${emergencyAlert.message ? "\n" + emergencyAlert.message : ""}`);
-  });
-  photoChannel = GroupBackend.subscribePhotos(group.id, refreshGroupPhotoMarkers);
-  renderGroupDetailPanel();
-}
-
-function leaveActiveGroup() {
-  activeGroup = null;
-  document.getElementById("btn-emergency").classList.add("hidden");
-  stopLocationBroadcast();
-  if (locationChannel) locationChannel.unsubscribe();
-  if (chatChannel) chatChannel.unsubscribe();
-  if (emergencyChannel) emergencyChannel.unsubscribe();
-  if (photoChannel) photoChannel.unsubscribe();
-  locationChannel = chatChannel = emergencyChannel = photoChannel = null;
-  Object.values(memberLocationMarkers).forEach((m) => m.remove());
-  memberLocationMarkers = {};
-  Object.values(groupPhotoMarkers).forEach((m) => m.remove());
-  groupPhotoMarkers = {};
 }
 
 let chatMessages = [];
 
-function renderGroupDetailPanel() {
+function renderCrewPanel() {
   openPanel(
-    escHtml(activeGroup.name),
+    "Crew",
     `
-    <p style="color:var(--text-dim);font-size:12px;">Invite code: <strong style="color:var(--text);">${escHtml(activeGroup.invite_code)}</strong> — share this so others can join.</p>
     <div id="chat-log" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin:8px 0;"></div>
     <div style="display:flex;gap:6px;">
-      <input id="chat-input" placeholder="Message the group..." style="margin-top:0;flex:1;" />
+      <input id="chat-input" placeholder="Message the crew..." style="margin-top:0;flex:1;" />
       <button class="pill-btn" id="chat-send">Send</button>
     </div>
     <button class="primary" id="open-folders-btn" style="background:var(--panel);border:1px solid var(--accent-bright);margin-top:12px;">Trip Folders</button>
-    <button class="primary" id="back-to-groups-btn" style="background:var(--panel);border:1px solid var(--border);">Switch Group</button>
+    <button class="primary" id="sign-out-btn" style="background:var(--panel);border:1px solid var(--border);">Sign Out</button>
     `
   );
   const log = document.getElementById("chat-log");
@@ -1640,7 +1577,7 @@ function renderGroupDetailPanel() {
     if (!body) return;
     input.value = "";
     try {
-      await GroupBackend.sendMessage(activeGroup.id, body);
+      await GroupBackend.sendMessage(body);
     } catch (err) {
       alert("Could not send message: " + err.message);
     }
@@ -1650,9 +1587,11 @@ function renderGroupDetailPanel() {
     if (e.key === "Enter") send();
   });
   document.getElementById("open-folders-btn").addEventListener("click", openFoldersPanel);
-  document.getElementById("back-to-groups-btn").addEventListener("click", () => {
-    leaveActiveGroup();
-    renderGroupsListPanel();
+  document.getElementById("sign-out-btn").addEventListener("click", async () => {
+    await GroupBackend.signOut();
+    session = null;
+    deactivateSocial();
+    closePanel();
   });
 }
 
@@ -1660,7 +1599,7 @@ function renderGroupDetailPanel() {
 async function openFoldersPanel() {
   let folders = [];
   try {
-    folders = await GroupBackend.listFolders(activeGroup.id);
+    folders = await GroupBackend.listFolders();
   } catch (err) {
     console.warn("Could not load folders:", err);
   }
@@ -1697,19 +1636,19 @@ async function openFoldersPanel() {
     if (!name) return;
     const description = document.getElementById("new-folder-desc").value.trim();
     try {
-      await GroupBackend.createFolder(activeGroup.id, name, description);
+      await GroupBackend.createFolder(name, description);
       openFoldersPanel();
     } catch (err) {
       alert("Could not create folder: " + err.message);
     }
   });
-  document.getElementById("back-to-group-btn").addEventListener("click", renderGroupDetailPanel);
+  document.getElementById("back-to-group-btn").addEventListener("click", renderCrewPanel);
 }
 
 async function openFolderDetailPanel(folder) {
   const [waypoints, trails] = await Promise.all([
-    GroupBackend.listWaypoints(activeGroup.id),
-    GroupBackend.listTrails(activeGroup.id),
+    GroupBackend.listWaypoints(),
+    GroupBackend.listTrails(),
   ]);
   const inFolder = { waypoints: waypoints.filter((w) => w.folder_id === folder.id), trails: trails.filter((t) => t.folder_id === folder.id) };
   const unassigned = { waypoints: waypoints.filter((w) => !w.folder_id), trails: trails.filter((t) => !t.folder_id) };
@@ -1805,7 +1744,7 @@ function startLocationBroadcast() {
       const now = Date.now();
       if (now - lastSent < 15000) return; // throttle: at most every 15s
       lastSent = now;
-      GroupBackend.updateMyLocation(activeGroup.id, pos.coords.latitude, pos.coords.longitude).catch((err) =>
+      GroupBackend.updateMyLocation(pos.coords.latitude, pos.coords.longitude).catch((err) =>
         console.warn("Location broadcast failed:", err)
       );
     },
@@ -1822,24 +1761,24 @@ function stopLocationBroadcast() {
 }
 
 document.getElementById("btn-emergency").addEventListener("click", async () => {
-  if (!activeGroup) return;
-  if (!confirm("Send an emergency alert to your whole group right now?")) return;
+  if (!session) return;
+  if (!confirm("Send an emergency alert to everyone right now?")) return;
   navigator.geolocation.getCurrentPosition(
     async (pos) => {
       try {
-        await GroupBackend.raiseEmergency(activeGroup.id, {
+        await GroupBackend.raiseEmergency({
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           message: "",
         });
-        alert("Emergency alert sent to your group.");
+        alert("Emergency alert sent.");
       } catch (err) {
         alert("Could not send alert: " + err.message);
       }
     },
     async () => {
       try {
-        await GroupBackend.raiseEmergency(activeGroup.id, { lat: null, lng: null, message: "" });
+        await GroupBackend.raiseEmergency({ lat: null, lng: null, message: "" });
         alert("Emergency alert sent (location unavailable).");
       } catch (err) {
         alert("Could not send alert: " + err.message);
