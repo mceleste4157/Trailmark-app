@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -22,6 +22,22 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Bump version.json
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: node .github/scripts/bump-version.js
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: bump version to $(node -p "require('./version.json').current") [skip ci]"
+            git push origin HEAD:main
+          fi
       - uses: actions/configure-pages@v5
       - name: Stage site (exclude repo/CI-only files)
         run: |

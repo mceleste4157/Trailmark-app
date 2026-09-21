@@ -346,6 +346,38 @@ function closePanel() {
 }
 document.getElementById("panel-close").addEventListener("click", closePanel);
 
+// ---------- Version history ----------
+const btnVersion = document.getElementById("btn-version");
+fetch("version.json", { cache: "no-store" })
+  .then((res) => res.json())
+  .then((data) => {
+    btnVersion.textContent = `v${data.current}`;
+  })
+  .catch(() => {});
+
+btnVersion.addEventListener("click", async () => {
+  let data;
+  try {
+    const res = await fetch("version.json", { cache: "no-store" });
+    data = await res.json();
+  } catch {
+    openPanel("Version history", "<p>Couldn't load version history right now.</p>");
+    return;
+  }
+  const rows = (data.history || [])
+    .map(
+      (h) => `
+        <div class="row">
+          <span>v${escHtml(h.version)}</span>
+          <span style="color:var(--text-dim);font-size:12px;">${escHtml(h.date)}</span>
+        </div>
+        <p style="margin:-4px 0 10px;color:var(--text-dim);font-size:13px;">${escHtml(h.summary || "")}</p>
+      `
+    )
+    .join("");
+  openPanel(`Version history — current v${escHtml(data.current)}`, rows || "<p>No history yet.</p>");
+});
+
 // Minimal escaping for any user-entered text we inject into innerHTML.
 function escHtml(str) {
   return String(str)
@@ -1637,10 +1669,58 @@ map.on("load", async () => {
   await initBreadcrumbTrail();
 });
 
+// ---------- Update detection ----------
+// Deliberately not a silent auto-reload: swapping app code out from under
+// an in-progress, unsaved trail ride recording would be worse than making
+// the user tap a banner. sw.js holds a new worker in "waiting" until this
+// tells it to take over (SKIP_WAITING), which is what makes a fresh push
+// show up here without a hard refresh.
+const updateBanner = document.getElementById("update-banner");
+let waitingWorker = null;
+
+function showUpdateBanner(worker) {
+  waitingWorker = worker;
+  updateBanner.classList.remove("hidden");
+}
+
+updateBanner.addEventListener("click", () => {
+  if (waitingWorker) {
+    waitingWorker.postMessage({ type: "SKIP_WAITING" });
+  } else {
+    location.reload();
+  }
+});
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch((err) => {
-      console.warn("Service worker registration failed:", err);
-    });
+    navigator.serviceWorker
+      .register("sw.js")
+      .then((registration) => {
+        if (registration.waiting && navigator.serviceWorker.controller) {
+          showUpdateBanner(registration.waiting);
+        }
+        registration.addEventListener("updatefound", () => {
+          const installing = registration.installing;
+          if (!installing) return;
+          installing.addEventListener("statechange", () => {
+            if (installing.state === "installed" && navigator.serviceWorker.controller) {
+              showUpdateBanner(installing);
+            }
+          });
+        });
+        // Catches updates that land during a long-lived single-page
+        // session (no navigation to trigger the browser's own check).
+        setInterval(() => registration.update().catch(() => {}), 30 * 60 * 1000);
+      })
+      .catch((err) => {
+        console.warn("Service worker registration failed:", err);
+      });
+  });
+
+  let reloadedForUpdate = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloadedForUpdate) return;
+    reloadedForUpdate = true;
+    location.reload();
   });
 }

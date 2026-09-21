@@ -1,7 +1,7 @@
 // Caches the app shell so Trailmark loads with zero connectivity.
 // Map tile (.pmtiles) requests use a separate cache managed by
 // js/offline-regions.js, keyed by the region download flow.
-const SHELL_CACHE = "trailmark-shell-v5";
+const SHELL_CACHE = "trailmark-shell-v6";
 const TILES_CACHE = "trailmark-tiles";
 // Live online-basemap tiles/style/sprite/glyphs, cached opportunistically
 // as "Download This Area" (js/app.js) walks a bounding box and fetches
@@ -12,6 +12,7 @@ const SHELL_ASSETS = [
   "./",
   "index.html",
   "manifest.json",
+  "version.json",
   "css/style.css",
   "js/db.js",
   "js/gps.js",
@@ -32,9 +33,17 @@ const SHELL_ASSETS = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS)).then(() => self.skipWaiting())
-  );
+  // No self.skipWaiting() here on purpose: a new worker should sit in
+  // "waiting" until the page explicitly tells it to take over (see the
+  // SKIP_WAITING message below, triggered by the "Update available" banner
+  // in js/app.js). That's what makes the update visible and controllable
+  // instead of silently swapping app code under an in-progress GPS
+  // recording session.
+  event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS)));
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
