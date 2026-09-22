@@ -946,7 +946,11 @@ async function refreshPhotoMarkers() {
       const el = document.createElement("div");
       el.textContent = "📷";
       el.style.cssText = "font-size:20px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.7));cursor:pointer;";
-      const objectUrl = URL.createObjectURL(photo.blob);
+      // photo.data/type is the current format (see PhotoStore.savePhoto);
+      // photo.blob is a fallback for any photo saved before that fix, on
+      // a browser where storing the Blob directly happened to work.
+      const blob = photo.data ? new Blob([photo.data], { type: photo.type }) : photo.blob;
+      const objectUrl = URL.createObjectURL(blob);
       const marker = new maplibregl.Marker({ element: el })
         .setLngLat([photo.lng, photo.lat])
         .setPopup(new maplibregl.Popup().setDOMContent(buildPhotoPopupContent(photo, objectUrl)))

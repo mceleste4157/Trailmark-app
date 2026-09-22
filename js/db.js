@@ -182,8 +182,16 @@ const CustomAreaStore = {
 };
 
 const PhotoStore = {
+  // Stores the photo's raw bytes (data) + mime type (type) rather than
+  // the Blob/File object itself — some WebKit versions (notably Safari,
+  // including recent iOS releases) fail to structured-clone a Blob/File
+  // into IndexedDB at all ("UnknownError: Error preparing Blob/File data
+  // to be stored in object store"), even though an ArrayBuffer of the
+  // exact same bytes stores fine. Reconstruct a Blob from these on read
+  // (see refreshPhotoMarkers in js/app.js) — object URLs need one.
   async savePhoto({ lat, lng, note, blob }) {
-    return db.photos.add({ lat, lng, note: note || "", blob, createdAt: Date.now() });
+    const data = await blob.arrayBuffer();
+    return db.photos.add({ lat, lng, note: note || "", data, type: blob.type, createdAt: Date.now() });
   },
   async listPhotos() {
     return db.photos.orderBy("createdAt").reverse().toArray();
