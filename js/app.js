@@ -298,6 +298,40 @@ let breadcrumbPoints = [];
 let breadcrumbWatchId = null;
 let activeBreadcrumbSourceIds = new Set();
 
+// Per-day show/hide + custom color, a per-device preference (not shared
+// data) so it's simplest kept in localStorage rather than IndexedDB.
+const BREADCRUMB_PREFS_KEY = "trailmark_breadcrumb_day_prefs";
+function loadBreadcrumbPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(BREADCRUMB_PREFS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+let breadcrumbDayPrefs = loadBreadcrumbPrefs(); // { [dayKey]: { color?: string, hidden?: boolean } }
+function saveBreadcrumbPrefs() {
+  try {
+    localStorage.setItem(BREADCRUMB_PREFS_KEY, JSON.stringify(breadcrumbDayPrefs));
+  } catch {
+    // Private browsing / storage full — the toggle still works for this
+    // session, it just won't persist across reloads.
+  }
+}
+function breadcrumbDayColor(dayKey, i) {
+  return breadcrumbDayPrefs[dayKey]?.color || BREADCRUMB_COLORS[i % BREADCRUMB_COLORS.length];
+}
+function isBreadcrumbDayVisible(dayKey) {
+  return !breadcrumbDayPrefs[dayKey]?.hidden;
+}
+function setBreadcrumbDayColor(dayKey, color) {
+  breadcrumbDayPrefs[dayKey] = { ...breadcrumbDayPrefs[dayKey], color };
+  saveBreadcrumbPrefs();
+}
+function toggleBreadcrumbDayVisible(dayKey) {
+  breadcrumbDayPrefs[dayKey] = { ...breadcrumbDayPrefs[dayKey], hidden: !breadcrumbDayPrefs[dayKey]?.hidden };
+  saveBreadcrumbPrefs();
+}
+
 function breadcrumbDayKey(t) {
   const d = new Date(t);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -322,14 +356,17 @@ function drawBreadcrumbLine() {
 
   Array.from(byDay.entries()).forEach(([dayKey, points], i) => {
     if (points.length < 2) return; // need at least 2 points to draw a line
+    if (!isBreadcrumbDayVisible(dayKey)) return; // hidden — leave out of nextIds so cleanup below removes it
     const sourceId = BREADCRUMB_SOURCE_PREFIX + dayKey;
     nextIds.add(sourceId);
+    const color = breadcrumbDayColor(dayKey, i);
     const geojson = {
       type: "Feature",
       geometry: { type: "LineString", coordinates: points.map((p) => [p.lng, p.lat]) },
     };
     if (map.getSource(sourceId)) {
       map.getSource(sourceId).setData(geojson);
+      map.setPaintProperty(sourceId, "line-color", color); // picks up a color change without a full re-add
       return;
     }
     // Bright, saturated colors at near-full opacity and a heavier width —
@@ -342,7 +379,7 @@ function drawBreadcrumbLine() {
       source: sourceId,
       layout: { "line-join": "round", "line-cap": "round" },
       paint: {
-        "line-color": BREADCRUMB_COLORS[i % BREADCRUMB_COLORS.length],
+        "line-color": color,
         "line-width": 3.5,
         "line-opacity": 0.9,
         "line-dasharray": [2, 1.5],
@@ -497,6 +534,7 @@ async function toggleCellTowers() {
 }
 
 document.getElementById("btn-cell")?.addEventListener("click", toggleCellTowers);
+document.getElementById("btn-settings")?.addEventListener("click", openSettingsPanel);
 
 let trailSourceCounter = 0;
 let activeWaypointMarkers = [];
@@ -1266,9 +1304,29 @@ async function getOnlineVectorTileTemplate() {
     throw new Error("Basemap server returned an unexpected response. Try again in a moment.");
   }
   for (const source of Object.values(style.sources || {})) {
-    if (source.type === "vector" && source.tiles && source.tiles.length) {
+    if (source.type !== "vector") continue;
+    if (source.tiles && source.tiles.length) {
       cachedVectorTileTemplate = source.tiles[0];
       return cachedVectorTileTemplate;
+    }
+    if (source.url) {
+      // Vector sources are commonly declared as a TileJSON reference (a
+      // `url`) rather than an inline `tiles` array — the actual tile URL
+      // template lives in that separate TileJSON document, one more
+      // fetch away. Missing this was the real bug behind "no trail/road
+      // data source" — not a provider-side issue, a client-side one.
+      try {
+        const tileJsonRes = await fetch(source.url, { cache: "no-store" });
+        if (tileJsonRes.ok) {
+          const tileJson = await tileJsonRes.json();
+          if (tileJson.tiles && tileJson.tiles.length) {
+            cachedVectorTileTemplate = tileJson.tiles[0];
+            return cachedVectorTileTemplate;
+          }
+        }
+      } catch (err) {
+        // Fall through — try any other source, or the final error below.
+      }
     }
   }
   throw new Error("The basemap style loaded but has no trail/road data source — this looks like a provider-side issue, not a connectivity one.");
@@ -1419,9 +1477,15 @@ async function openTrailsPanel() {
   const breadcrumbDays = Array.from(breadcrumbPointsByDay().keys());
   const breadcrumbLegend = breadcrumbDays
     .map((dayKey, i) => {
-      const color = BREADCRUMB_COLORS[i % BREADCRUMB_COLORS.length];
+      const color = breadcrumbDayColor(dayKey, i);
+      const visible = isBreadcrumbDayVisible(dayKey);
       const label = new Date(dayKey + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
-      return `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;"><span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;"></span>${escHtml(label)}</span>`;
+      return `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;margin-bottom:6px;">
+        <input type="color" class="breadcrumb-day-color" data-day="${dayKey}" value="${color}" title="Change this day's color" style="width:18px;height:18px;padding:0;border:none;border-radius:50%;background:none;cursor:pointer;" />
+        <button type="button" class="breadcrumb-day-toggle" data-day="${dayKey}" title="${visible ? "Hide" : "Show"} this day" style="background:none;border:none;padding:0;cursor:pointer;font-size:12px;color:${
+          visible ? "var(--text)" : "var(--text-dim)"
+        };text-decoration:${visible ? "none" : "line-through"};">${escHtml(label)}</button>
+      </span>`;
     })
     .join("");
   const rows = trails
@@ -1496,6 +1560,19 @@ async function openTrailsPanel() {
     if (!confirm(`Clear all ${breadcrumbCount} breadcrumb points? This can't be undone.`)) return;
     await clearBreadcrumbTrail();
     openTrailsPanel();
+  });
+  panelBody.querySelectorAll(".breadcrumb-day-color").forEach((input) => {
+    input.addEventListener("input", (e) => {
+      setBreadcrumbDayColor(e.target.dataset.day, e.target.value);
+      drawBreadcrumbLine();
+    });
+  });
+  panelBody.querySelectorAll(".breadcrumb-day-toggle").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      toggleBreadcrumbDayVisible(btn.dataset.day);
+      drawBreadcrumbLine();
+      openTrailsPanel(); // re-render the legend so the strikethrough/dim state updates
+    });
   });
 
   panelBody.querySelectorAll(".trail-item button").forEach((btn) => {
@@ -1743,14 +1820,14 @@ if (GroupBackend.enabled) {
 async function openGroupPanel() {
   if (!GroupBackend.enabled) {
     openPanel(
-      "Crew",
+      "Chat",
       `<p style="color:var(--text-dim);font-size:13px;">Crew features (chat, live locations, shared markers) aren't set up yet — see js/group/config.js in the repo.</p>`
     );
     return;
   }
   if (!session) {
     // `session` is set once by the getSession() call at load time, which
-    // can still be in flight the first time someone taps Crew (e.g. right
+    // can still be in flight the first time someone taps Chat (e.g. right
     // after opening the app) — re-check directly here rather than trust
     // a variable that might not have resolved yet, so an already-signed-in
     // visitor doesn't get bounced to the sign-in screen for no reason.
@@ -1761,7 +1838,41 @@ async function openGroupPanel() {
     return;
   }
   activateSocial();
-  renderCrewPanel();
+  renderChatPanel();
+}
+
+// Settings: everything that isn't chat itself — trip folders and account
+// sign in/out. Split out from the Chat panel (which used to carry all of
+// this) so Chat stays focused on just messaging.
+async function openSettingsPanel() {
+  if (!GroupBackend.enabled) {
+    openPanel(
+      "Settings",
+      `<p style="color:var(--text-dim);font-size:13px;">Crew features aren't set up yet — see js/group/config.js in the repo.</p>`
+    );
+    return;
+  }
+  if (!session) {
+    session = await GroupBackend.getSession().catch(() => null);
+  }
+  if (!session) {
+    renderAuthPanel();
+    return;
+  }
+  openPanel(
+    "Settings",
+    `
+    <button class="primary" id="open-folders-btn" style="background:var(--panel);border:1px solid var(--accent-bright);">Trip Folders</button>
+    <button class="primary" id="sign-out-btn" style="background:var(--panel);border:1px solid var(--border);">Sign Out</button>
+    `
+  );
+  document.getElementById("open-folders-btn").addEventListener("click", openFoldersPanel);
+  document.getElementById("sign-out-btn").addEventListener("click", async () => {
+    await GroupBackend.signOut();
+    session = null;
+    deactivateSocial();
+    closePanel();
+  });
 }
 
 function activateSocial() {
@@ -1790,6 +1901,8 @@ function deactivateSocial() {
   locationChannel = chatChannel = photoChannel = waypointChannel = null;
   Object.values(memberLocationMarkers).forEach((m) => m.remove());
   memberLocationMarkers = {};
+  activeCrewRows = [];
+  memberColorAssignments = {};
   Object.values(groupPhotoMarkers).forEach((m) => m.remove());
   groupPhotoMarkers = {};
   Object.values(groupWaypointMarkers).forEach((m) => m.remove());
@@ -1842,7 +1955,7 @@ function renderAuthPanel(mode = "signin") {
         return;
       }
       activateSocial();
-      renderCrewPanel();
+      renderChatPanel();
     } catch (err) {
       showError(err);
     }
@@ -1851,17 +1964,16 @@ function renderAuthPanel(mode = "signin") {
 
 let chatMessages = [];
 
-function renderCrewPanel() {
+function renderChatPanel() {
   openPanel(
-    "Crew",
+    "Chat",
     `
+    <div id="crew-roster" style="font-size:12px;color:var(--text-dim);margin-bottom:8px;"></div>
     <div id="chat-log" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin:8px 0;display:flex;flex-direction:column;"></div>
     <div style="display:flex;gap:6px;">
       <input id="chat-input" placeholder="Message the crew..." style="margin-top:0;flex:1;" />
       <button class="pill-btn" id="chat-send">Send</button>
     </div>
-    <button class="primary" id="open-folders-btn" style="background:var(--panel);border:1px solid var(--accent-bright);margin-top:12px;">Trip Folders</button>
-    <button class="primary" id="sign-out-btn" style="background:var(--panel);border:1px solid var(--border);">Sign Out</button>
     `
   );
   const log = document.getElementById("chat-log");
@@ -1869,6 +1981,7 @@ function renderCrewPanel() {
   log.scrollTop = log.scrollHeight;
   unreadMessageCount = 0;
   updateChatBadge();
+  renderCrewRoster();
 
   const send = async () => {
     const input = document.getElementById("chat-input");
@@ -1884,13 +1997,6 @@ function renderCrewPanel() {
   document.getElementById("chat-send").addEventListener("click", send);
   document.getElementById("chat-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") send();
-  });
-  document.getElementById("open-folders-btn").addEventListener("click", openFoldersPanel);
-  document.getElementById("sign-out-btn").addEventListener("click", async () => {
-    await GroupBackend.signOut();
-    session = null;
-    deactivateSocial();
-    closePanel();
   });
 }
 
@@ -1941,7 +2047,7 @@ async function openFoldersPanel() {
       alert("Could not create folder: " + err.message);
     }
   });
-  document.getElementById("back-to-group-btn").addEventListener("click", renderCrewPanel);
+  document.getElementById("back-to-group-btn").addEventListener("click", openSettingsPanel);
 }
 
 async function openFolderDetailPanel(folder) {
@@ -2000,7 +2106,12 @@ function chatMessageEl(m) {
   const isMine = session && m.user_id === session.user.id;
   if (isMine) el.style.marginLeft = "auto";
   const name = m.profiles?.display_name || "Rider";
-  el.innerHTML = `<strong>${escHtml(name)}:</strong> ${escHtml(m.body)}`;
+  const time = m.created_at
+    ? new Date(m.created_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : "";
+  el.innerHTML = `<strong>${escHtml(name)}:</strong> ${escHtml(m.body)}${
+    time ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px;">${escHtml(time)}</div>` : ""
+  }`;
   return el;
 }
 
@@ -2032,18 +2143,35 @@ function appendChatMessageIfOpen(msg) {
   }
 }
 
+// Each signed-in crew member gets their own stable color (not just one
+// blue dot for everyone) — assigned in the order they're first seen and
+// kept for the rest of the session so a person's color doesn't shift
+// around as the roster updates.
+const MEMBER_COLORS = ["#2563eb", "#ec4899", "#f97316", "#22c55e", "#a855f7", "#eab308", "#06b6d4", "#ef4444"];
+let memberColorAssignments = {};
+
+function colorForMember(userId) {
+  if (!memberColorAssignments[userId]) {
+    const idx = Object.keys(memberColorAssignments).length % MEMBER_COLORS.length;
+    memberColorAssignments[userId] = MEMBER_COLORS[idx];
+  }
+  return memberColorAssignments[userId];
+}
+
+let activeCrewRows = [];
+
 function refreshMemberMarkers(rows) {
   const seen = new Set();
   rows.forEach((row) => {
     if (session && row.user_id === session.user.id) return; // don't show yourself
     seen.add(row.user_id);
     const name = row.profiles?.display_name || "Rider";
+    const color = colorForMember(row.user_id);
     if (memberLocationMarkers[row.user_id]) {
       memberLocationMarkers[row.user_id].setLngLat([row.lng, row.lat]);
     } else {
       const el = document.createElement("div");
-      el.style.cssText =
-        "width:14px;height:14px;border-radius:50%;background:#2563eb;border:2px solid white;box-shadow:0 0 0 2px rgba(37,99,235,0.4);";
+      el.style.cssText = `width:14px;height:14px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 0 2px rgba(0,0,0,0.25);`;
       memberLocationMarkers[row.user_id] = new maplibregl.Marker({ element: el })
         .setLngLat([row.lng, row.lat])
         .setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(escHtml(name)))
@@ -2056,6 +2184,30 @@ function refreshMemberMarkers(rows) {
       delete memberLocationMarkers[uid];
     }
   });
+  activeCrewRows = rows.filter((row) => !(session && row.user_id === session.user.id));
+  renderCrewRoster();
+}
+
+// Who's currently on the map — shown at the top of the Chat panel. A
+// no-op if that panel isn't open right now.
+function renderCrewRoster() {
+  const el = document.getElementById("crew-roster");
+  if (!el) return;
+  if (activeCrewRows.length === 0) {
+    el.textContent = "No one else is on the map right now.";
+    return;
+  }
+  el.innerHTML =
+    `<div style="margin-bottom:4px;">${activeCrewRows.length} online:</div>` +
+    activeCrewRows
+      .map((row) => {
+        const color = colorForMember(row.user_id);
+        const name = row.profiles?.display_name || "Rider";
+        return `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;"><span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;"></span>${escHtml(
+          name
+        )}</span>`;
+      })
+      .join("");
 }
 
 function startLocationBroadcast() {

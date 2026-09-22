@@ -283,7 +283,7 @@ html, body {
   cursor: pointer;
 }
 
-#panel-body input, #panel-body textarea {
+#panel-body input, #panel-body textarea, #panel-body select {
   width: 100%;
   padding: 8px 10px;
   margin-top: 6px;
@@ -292,6 +292,18 @@ html, body {
   border-radius: 8px;
   color: var(--text);
   font-family: inherit;
+  /* iOS Safari auto-zooms the page on focus for any input under 16px —
+     these had no explicit font-size, so they fell back to the browser's
+     smaller default form-control size and triggered it every time. */
+  font-size: 16px;
+}
+
+/* MapLibre popups always render on a white background regardless of the
+   app's dark theme, but popup content had no explicit color of its own
+   and inherited body's near-white --text, making names/notes almost
+   unreadable. */
+.maplibregl-popup-content {
+  color: #1f2937;
 }
 
 #stats-hud {
