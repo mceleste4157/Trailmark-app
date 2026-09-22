@@ -7,8 +7,8 @@ db.version(1).stores({
   trails: "++id, name, createdAt",
   // Standalone waypoints (pins) not tied to a recorded trail.
   waypoints: "++id, name, createdAt",
-  // Metadata for downloaded offline map regions (the .pmtiles files
-  // themselves live in data/regions/, this just tracks what's available).
+  // Metadata for downloaded offline map regions (dropped in v5 — see
+  // below — in favor of the user-drawn CustomAreaStore).
   regions: "++id, &name, downloadedAt",
 });
 
@@ -30,10 +30,10 @@ db.version(3).stores({
   regions: "++id, &name, downloadedAt",
   breadcrumbs: "++id, t",
   // User-drawn offline downloads of the online basemap — pan/zoom
-  // anywhere, download that exact view, not limited to the curated
-  // regions in data/regions/. The actual tiles live in the browser's
-  // Cache Storage (see sw.js's ONLINE_TILES_CACHE); this just tracks
-  // what's been downloaded so it can be listed/removed.
+  // anywhere, download that exact view, not limited to a fixed set of
+  // curated regions. The actual tiles live in the browser's Cache
+  // Storage (see sw.js's ONLINE_TILES_CACHE); this just tracks what's
+  // been downloaded so it can be listed/removed.
   customAreas: "++id, &name, downloadedAt",
 });
 
