@@ -214,7 +214,7 @@ const GroupBackend = (() => {
   }
 
   // ---------- Shared photos (snap-and-tag, standalone — see js/app.js's
-  // toolbar Photo button) ----------
+  // Tools panel Photo row) ----------
   async function addPhoto({ lat, lng, note, photoFile }) {
     const uid = await currentUserId();
     const photo_path = await uploadPhoto(photoFile);

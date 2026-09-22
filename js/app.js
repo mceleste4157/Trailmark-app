@@ -657,20 +657,15 @@ const toolbarButtons = document.querySelectorAll("#toolbar button");
 toolbarButtons.forEach((btn) => {
   btn.addEventListener("click", () => {
     const mode = btn.dataset.mode;
-    // Start Ride is an instant action (no panel), so it doesn't get the
-    // toolbar's "active" panel-mode styling the other buttons use.
+    // Go is an instant action (no panel), so it doesn't get the toolbar's
+    // "active" panel-mode styling the other buttons use.
     if (mode === "record") {
       startRecordingNow();
       return;
     }
-    if (mode === "photo") {
-      requestPhotoLocation();
-      document.getElementById("photo-input").click();
-      return;
-    }
     toolbarButtons.forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    if (mode === "waypoint") openWaypointPanel();
+    if (mode === "tools") openToolsPanel();
     if (mode === "regions") openRegionsPanel();
     if (mode === "trails") openTrailsPanel();
     if (mode === "group") openGroupPanel();
@@ -875,9 +870,7 @@ async function refreshPhotoMarkers() {
   });
 }
 
-// The toolbar's click dispatcher (above) opens this file input directly —
-// btn-photo has no separate listener of its own, matching the same
-// instant-action pattern as Start Ride.
+// The Tools panel's Photo row opens this file input directly.
 const photoInput = document.getElementById("photo-input");
 photoInput.addEventListener("change", async (e) => {
   const file = e.target.files[0];
@@ -1020,6 +1013,48 @@ async function refreshGroupWaypointMarkers(rows) {
   });
 }
 
+// Consolidates the three "add something" actions (previously separate
+// toolbar buttons/a buried Plan a Route row) into one Tools panel.
+function openToolsPanel() {
+  openPanel(
+    "Tools",
+    `
+    <div class="region-item">
+      <div><div>📷 Photo</div><small>Snap a geotagged photo</small></div>
+      <button class="pill-btn" id="tools-photo-btn">Open</button>
+    </div>
+    <div class="region-item">
+      <div><div>📍 Waypoint</div><small>Drop a marker at your current GPS location</small></div>
+      <button class="pill-btn" id="tools-waypoint-btn">Open</button>
+    </div>
+    <div class="region-item">
+      <div><div>🛣️ Plan a Route</div><small>Lay out a route ahead of time by tapping points on the map</small></div>
+      <button class="pill-btn" id="tools-route-btn">Open</button>
+    </div>
+    `
+  );
+  document.getElementById("tools-photo-btn").addEventListener("click", () => {
+    closePanel();
+    requestPhotoLocation();
+    document.getElementById("photo-input").click();
+  });
+  document.getElementById("tools-waypoint-btn").addEventListener("click", openWaypointPanel);
+  document.getElementById("tools-route-btn").addEventListener("click", () => {
+    if (GpsRecorder.isRecording()) {
+      alert("You're already tracking a ride. Use the Stop & Save button on the map first.");
+      return;
+    }
+    if (planningRoute) {
+      alert("You're already planning a route. Use the Finish & Save or Cancel button on the map.");
+      return;
+    }
+    const name = prompt("Route name:", "Unnamed route");
+    if (name === null) return;
+    startPlanningRoute(name.trim() || "Unnamed route");
+    closePanel();
+  });
+}
+
 function openWaypointPanel() {
   openPanel(
     "Drop a Waypoint",
@@ -1124,7 +1159,9 @@ function drawLiveTrail(points) {
 
 // One tap starts recording immediately — no name prompt in the way while
 // you're about to start driving. Name it afterward (defaults to today's
-// date, renameable from My Trails).
+// date, renameable from My Content). Also starts sharing your live
+// location with the crew if you're signed in — "Go" is meant as one tap
+// for both, not two separate steps.
 function startRecordingNow() {
   if (GpsRecorder.isRecording()) {
     openPanel("Ride in progress", `<p>You're already tracking a ride. Use the Stop &amp; Save button on the map.</p>`);
@@ -1149,6 +1186,7 @@ function startRecordingNow() {
     recordingTime.textContent = formatElapsed(Date.now() - recordingStartedAt);
   }, 1000);
   window.__pendingTrailName = `Ride – ${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  if (GroupBackend.enabled && session) activateSocial();
 }
 
 document.getElementById("btn-stop-recording").addEventListener("click", async () => {
@@ -1267,7 +1305,7 @@ document.getElementById("btn-planning-finish").addEventListener("click", async (
     startedAt: null,
     endedAt: null,
   });
-  alert(`Saved "${name}" — find it under My Trails.`);
+  alert(`Saved "${name}" — find it under My Content.`);
 });
 
 // ---------- Custom area download ("select an area on the map") ----------
@@ -1473,6 +1511,7 @@ function difficultyLabel(d) {
 
 async function openTrailsPanel() {
   const trails = await TrailStore.listTrails();
+  const waypoints = await WaypointStore.listWaypoints();
   const breadcrumbCount = await BreadcrumbStore.count();
   const breadcrumbDays = Array.from(breadcrumbPointsByDay().keys());
   const breadcrumbLegend = breadcrumbDays
@@ -1507,14 +1546,25 @@ async function openTrailsPanel() {
       </div>`
     )
     .join("");
+  const waypointRows = waypoints
+    .map(
+      (wp) => `
+      <div class="trail-item" data-wp-id="${wp.id}">
+        <div>
+          <div>${escHtml(wp.name)} <small style="color:var(--text-dim);">(${CATEGORY_LABELS[wp.category] || "Other"})</small></div>
+          <small>${new Date(wp.createdAt).toLocaleDateString()}</small>
+        </div>
+        <div>
+          <button class="pill-btn" data-action="show">Show</button>
+          <button class="pill-btn danger" data-action="delete">Delete</button>
+        </div>
+      </div>`
+    )
+    .join("");
 
   openPanel(
-    "My Trails",
+    "My Content",
     `
-    <div class="region-item">
-      <div><div>Plan a Route</div><small>Lay out a route ahead of time by tapping points on the map</small></div>
-      <button class="pill-btn" id="plan-route-btn">Plan</button>
-    </div>
     <div class="region-item">
       <div><div>Import GPX</div><small>From onX, Gaia, AllTrails, or a GPS unit — brings in the track and any waypoints</small></div>
       <button class="pill-btn" id="import-gpx-btn">Import</button>
@@ -1525,23 +1575,12 @@ async function openTrailsPanel() {
       <button class="pill-btn danger" id="clear-breadcrumb-btn">Clear</button>
     </div>
     ${breadcrumbLegend ? `<div style="padding:6px 0 2px;font-size:12px;color:var(--text-dim);">${breadcrumbLegend}</div>` : ""}
-    ${rows || "<p>No saved trails yet. Tap Record to track one.</p>"}
+    <h4 style="margin-bottom:4px;margin-top:14px;">Trails &amp; Routes</h4>
+    ${rows || "<p>No saved trails yet. Tap Go to track one.</p>"}
+    <h4 style="margin-bottom:4px;margin-top:14px;">Waypoints</h4>
+    ${waypointRows || "<p>No waypoints dropped yet.</p>"}
     `
   );
-  document.getElementById("plan-route-btn").addEventListener("click", () => {
-    if (GpsRecorder.isRecording()) {
-      alert("You're already tracking a ride. Use the Stop & Save button on the map first.");
-      return;
-    }
-    if (planningRoute) {
-      alert("You're already planning a route. Use the Finish & Save or Cancel button on the map.");
-      return;
-    }
-    const name = prompt("Route name:", "Unnamed route");
-    if (name === null) return;
-    startPlanningRoute(name.trim() || "Unnamed route");
-    closePanel();
-  });
   document.getElementById("import-gpx-btn").addEventListener("click", () => {
     document.getElementById("import-gpx-input").click();
   });
@@ -1575,7 +1614,7 @@ async function openTrailsPanel() {
     });
   });
 
-  panelBody.querySelectorAll(".trail-item button").forEach((btn) => {
+  panelBody.querySelectorAll(".trail-item[data-id] button").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       const id = Number(e.target.closest(".trail-item").dataset.id);
       const action = e.target.dataset.action;
@@ -1614,6 +1653,22 @@ async function openTrailsPanel() {
       } else {
         const trail = await TrailStore.getTrail(id);
         showTrailOnMap(trail);
+        closePanel();
+      }
+    });
+  });
+
+  panelBody.querySelectorAll(".trail-item[data-wp-id] button").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      const id = Number(e.target.closest(".trail-item").dataset.wpId);
+      const action = e.target.dataset.action;
+      if (action === "delete") {
+        await WaypointStore.deleteWaypoint(id);
+        await refreshWaypointMarkers();
+        openTrailsPanel();
+      } else {
+        const wp = await WaypointStore.getWaypoint(id);
+        map.flyTo({ center: [wp.lng, wp.lat], zoom: 15 });
         closePanel();
       }
     });
