@@ -55,11 +55,23 @@ const SATELLITE_STYLE = {
       ],
       tileSize: 256,
       attribution: "Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+      // World_Imagery's tile scheme accepts requests up to z23, but real
+      // photography for rural/backcountry areas (exactly where this app's
+      // trails are) usually tops out well before that — the server's
+      // answer for a tile it has no imagery for isn't an error, it's a
+      // placeholder image with "Map data not yet available for this area"
+      // baked into it, which is the broken-looking tile users were
+      // hitting when zooming all the way in. Capping maxzoom here makes
+      // MapLibre stop requesting past it and instead smoothly over-scale
+      // the last real tile it has (standard raster-source behavior) —
+      // a softer image beats a dead-end error tile.
+      maxzoom: 19,
     },
     // Esri's free "hybrid" reference layer — transparent PNG tiles with
     // just place names, road labels, and boundaries, meant to sit on top
     // of World_Imagery exactly like this. Same server/ToS as the imagery
-    // above, no separate API key.
+    // above, no separate API key. Capped to match the satellite layer so
+    // the two stay visually in sync at extreme zoom.
     "esri-labels": {
       type: "raster",
       tiles: [
@@ -67,6 +79,7 @@ const SATELLITE_STYLE = {
       ],
       tileSize: 256,
       attribution: "Esri",
+      maxzoom: 19,
     },
   },
   layers: [
