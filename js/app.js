@@ -1749,6 +1749,14 @@ async function openGroupPanel() {
     return;
   }
   if (!session) {
+    // `session` is set once by the getSession() call at load time, which
+    // can still be in flight the first time someone taps Crew (e.g. right
+    // after opening the app) — re-check directly here rather than trust
+    // a variable that might not have resolved yet, so an already-signed-in
+    // visitor doesn't get bounced to the sign-in screen for no reason.
+    session = await GroupBackend.getSession().catch(() => null);
+  }
+  if (!session) {
     renderAuthPanel();
     return;
   }
@@ -1773,6 +1781,8 @@ function activateSocial() {
 function deactivateSocial() {
   socialActive = false;
   stopLocationBroadcast();
+  unreadMessageCount = 0;
+  updateChatBadge();
   if (locationChannel) locationChannel.unsubscribe();
   if (chatChannel) chatChannel.unsubscribe();
   if (photoChannel) photoChannel.unsubscribe();
@@ -1786,42 +1796,41 @@ function deactivateSocial() {
   groupWaypointMarkers = {};
 }
 
-function renderAuthPanel() {
+// mode: "signin" (default — email + password only, no display name; that
+// was already set once at account creation and Supabase remembers who you
+// are from the saved session) | "signup" (adds the display-name field,
+// only needed the one time an account is created).
+function renderAuthPanel(mode = "signin") {
+  const isSignup = mode === "signup";
   openPanel(
-    "Sign In",
+    isSignup ? "Create Account" : "Sign In",
     `
-    <label>Display name</label>
-    <input id="auth-name" placeholder="What everyone sees you as" />
+    ${isSignup ? `<label>Display name</label>\n    <input id="auth-name" placeholder="What everyone sees you as" />` : ""}
     <label>Email</label>
     <input id="auth-email" type="email" placeholder="you@example.com" />
     <label>Password</label>
     <input id="auth-password" type="password" placeholder="At least 6 characters" />
-    <button class="primary" id="auth-signin">Sign In</button>
-    <button class="primary" id="auth-signup" style="background:var(--panel);border:1px solid var(--border);">Create Account</button>
+    <button class="primary" id="auth-submit">${isSignup ? "Create Account" : "Sign In"}</button>
+    <button id="auth-switch-mode" style="background:none;border:none;color:var(--accent);font-size:13px;margin-top:8px;cursor:pointer;">
+      ${isSignup ? "Already have an account? Sign in" : "New here? Create an account"}
+    </button>
     <p id="auth-error" style="color:var(--danger);font-size:13px;"></p>
     `
   );
   const showError = (err) => {
     document.getElementById("auth-error").textContent = err.message || String(err);
   };
-  document.getElementById("auth-signin").addEventListener("click", async () => {
+  document.getElementById("auth-switch-mode").addEventListener("click", () => renderAuthPanel(isSignup ? "signin" : "signup"));
+  document.getElementById("auth-submit").addEventListener("click", async () => {
     try {
       const email = document.getElementById("auth-email").value.trim();
       const password = document.getElementById("auth-password").value;
-      await GroupBackend.signIn(email, password);
-      session = await GroupBackend.getSession();
-      activateSocial();
-      renderCrewPanel();
-    } catch (err) {
-      showError(err);
-    }
-  });
-  document.getElementById("auth-signup").addEventListener("click", async () => {
-    try {
-      const name = document.getElementById("auth-name").value.trim() || "Rider";
-      const email = document.getElementById("auth-email").value.trim();
-      const password = document.getElementById("auth-password").value;
-      await GroupBackend.signUp(email, password, name);
+      if (isSignup) {
+        const name = document.getElementById("auth-name").value.trim() || "Rider";
+        await GroupBackend.signUp(email, password, name);
+      } else {
+        await GroupBackend.signIn(email, password);
+      }
       session = await GroupBackend.getSession();
       if (!session) {
         // The project requires email confirmation — there's no active
@@ -1846,7 +1855,7 @@ function renderCrewPanel() {
   openPanel(
     "Crew",
     `
-    <div id="chat-log" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin:8px 0;"></div>
+    <div id="chat-log" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin:8px 0;display:flex;flex-direction:column;"></div>
     <div style="display:flex;gap:6px;">
       <input id="chat-input" placeholder="Message the crew..." style="margin-top:0;flex:1;" />
       <button class="pill-btn" id="chat-send">Send</button>
@@ -1858,6 +1867,8 @@ function renderCrewPanel() {
   const log = document.getElementById("chat-log");
   chatMessages.forEach((m) => log.appendChild(chatMessageEl(m)));
   log.scrollTop = log.scrollHeight;
+  unreadMessageCount = 0;
+  updateChatBadge();
 
   const send = async () => {
     const input = document.getElementById("chat-input");
@@ -1984,18 +1995,41 @@ async function openFolderDetailPanel(folder) {
 
 function chatMessageEl(m) {
   const el = document.createElement("div");
-  el.style.fontSize = "13px";
-  el.style.marginBottom = "6px";
+  el.style.cssText =
+    "font-size:13px;margin-bottom:6px;max-width:85%;padding:6px 10px;border-radius:10px;background:var(--panel);border:1px solid var(--border);word-break:break-word;overflow-wrap:anywhere;";
+  const isMine = session && m.user_id === session.user.id;
+  if (isMine) el.style.marginLeft = "auto";
   const name = m.profiles?.display_name || "Rider";
   el.innerHTML = `<strong>${escHtml(name)}:</strong> ${escHtml(m.body)}`;
   return el;
 }
 
+let unreadMessageCount = 0;
+const chatBadge = document.getElementById("chat-badge");
+
+function updateChatBadge() {
+  if (unreadMessageCount > 0) {
+    chatBadge.textContent = unreadMessageCount > 9 ? "9+" : String(unreadMessageCount);
+    chatBadge.classList.remove("hidden");
+  } else {
+    chatBadge.classList.add("hidden");
+  }
+}
+
 function appendChatMessageIfOpen(msg) {
+  // Not just "does #chat-log exist" — closing the panel with the X button
+  // hides it without clearing its contents, so the element can still be
+  // in the DOM while the user isn't actually looking at it.
   const log = document.getElementById("chat-log");
-  if (!log) return; // panel isn't showing chat right now
-  log.appendChild(chatMessageEl(msg));
-  log.scrollTop = log.scrollHeight;
+  if (log && !panel.classList.contains("hidden")) {
+    log.appendChild(chatMessageEl(msg));
+    log.scrollTop = log.scrollHeight;
+    return;
+  }
+  if (!session || msg.user_id !== session.user.id) {
+    unreadMessageCount++;
+    updateChatBadge();
+  }
 }
 
 function refreshMemberMarkers(rows) {

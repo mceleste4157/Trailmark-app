@@ -103,7 +103,12 @@ create policy "creators can delete their own folders"
 -- ---------- Shared waypoints (markers with descriptions + optional photo) ----------
 create table if not exists shared_waypoints (
   id uuid primary key default uuid_generate_v4(),
-  created_by uuid not null references auth.users(id),
+  -- References profiles(id), not auth.users(id) directly — PostgREST can
+  -- only embed `profiles(display_name)` in a select (as the app does to
+  -- show who dropped something) across an actual foreign key, and it
+  -- won't infer one transitively through a third table both merely
+  -- reference. See the migration block below for existing databases.
+  created_by uuid not null references profiles(id),
   name text not null,
   note text default '',
   lat double precision not null,
@@ -176,7 +181,7 @@ create policy "creators can delete their own shared trails"
 -- ---------- Shared photos (snap-and-tag, standalone) ----------
 create table if not exists shared_photos (
   id uuid primary key default uuid_generate_v4(),
-  created_by uuid not null references auth.users(id),
+  created_by uuid not null references profiles(id), -- see the profiles(id) note on shared_waypoints above
   lat double precision not null,
   lng double precision not null,
   note text default '',
@@ -204,7 +209,7 @@ create policy "creators can delete their own shared photos"
 -- ---------- Live locations (presence while riding) ----------
 -- One row per user, upserted repeatedly — not a history log.
 create table if not exists locations (
-  user_id uuid primary key references auth.users(id) on delete cascade,
+  user_id uuid primary key references profiles(id) on delete cascade, -- see the profiles(id) note on shared_waypoints above
   lat double precision not null,
   lng double precision not null,
   updated_at timestamptz not null default now()
@@ -230,7 +235,7 @@ create policy "users can update their own location"
 -- ---------- Chat ----------
 create table if not exists messages (
   id uuid primary key default uuid_generate_v4(),
-  user_id uuid not null references auth.users(id),
+  user_id uuid not null references profiles(id), -- see the profiles(id) note on shared_waypoints above
   body text not null,
   created_at timestamptz not null default now()
 );
@@ -246,6 +251,36 @@ drop policy if exists "authenticated users can send messages" on messages;
 create policy "authenticated users can send messages"
   on messages for insert
   with check (auth.role() = 'authenticated' and auth.uid() = user_id);
+
+-- ---------- Migrate existing FKs to reference profiles(id) ----------
+-- If these tables already existed (created before the `references
+-- profiles(id)` change above), their user/creator column still points at
+-- auth.users(id) — the CREATE TABLE statements above are no-ops for a
+-- table that already exists, so this needs an explicit migration.
+-- Without it, PostgREST can't resolve the `profiles(display_name)` embed
+-- these queries use, and fails outright even though the base rows exist
+-- (symptom: live locations/messages/shared photos/shared waypoints exist
+-- in the table but never render — the whole query silently errors).
+-- Guarded to be safe to re-run, and a no-op once already migrated.
+do $$
+begin
+  if exists (select 1 from pg_constraint where conname = 'locations_user_id_fkey' and confrelid = 'auth.users'::regclass) then
+    alter table locations drop constraint locations_user_id_fkey;
+    alter table locations add constraint locations_user_id_fkey foreign key (user_id) references profiles(id) on delete cascade;
+  end if;
+  if exists (select 1 from pg_constraint where conname = 'messages_user_id_fkey' and confrelid = 'auth.users'::regclass) then
+    alter table messages drop constraint messages_user_id_fkey;
+    alter table messages add constraint messages_user_id_fkey foreign key (user_id) references profiles(id);
+  end if;
+  if exists (select 1 from pg_constraint where conname = 'shared_photos_created_by_fkey' and confrelid = 'auth.users'::regclass) then
+    alter table shared_photos drop constraint shared_photos_created_by_fkey;
+    alter table shared_photos add constraint shared_photos_created_by_fkey foreign key (created_by) references profiles(id);
+  end if;
+  if exists (select 1 from pg_constraint where conname = 'shared_waypoints_created_by_fkey' and confrelid = 'auth.users'::regclass) then
+    alter table shared_waypoints drop constraint shared_waypoints_created_by_fkey;
+    alter table shared_waypoints add constraint shared_waypoints_created_by_fkey foreign key (created_by) references profiles(id);
+  end if;
+end $$;
 
 -- ---------- Realtime ----------
 -- Enable realtime (live push on insert/update) for the tables that need
