@@ -1,6 +1,12 @@
 {
-  "current": "1.32",
+  "current": "1.33",
   "history": [
+    {
+      "version": "1.33",
+      "date": "2026-09-22",
+      "summary": "Fix photo capture failing with \"Error preparing Blob/File data to be stored in object store\"",
+      "commit": "1ae97e9"
+    },
     {
       "version": "1.32",
       "date": "2026-09-22",
