@@ -1,6 +1,12 @@
 {
-  "current": "1.36",
+  "current": "1.37",
   "history": [
+    {
+      "version": "1.37",
+      "date": "2026-09-22",
+      "summary": "Add vehicle maintenance tracking, entirely private to the signed-in user",
+      "commit": "e9884e0"
+    },
     {
       "version": "1.36",
       "date": "2026-09-22",
