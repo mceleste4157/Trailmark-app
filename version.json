@@ -1,6 +1,12 @@
 {
-  "current": "1.43",
+  "current": "1.44",
   "history": [
+    {
+      "version": "1.44",
+      "date": "2026-09-22",
+      "summary": "Give Weather its own topbar button, and let topbar-right wrap instead of overflowing",
+      "commit": "2e61234"
+    },
     {
       "version": "1.43",
       "date": "2026-09-22",
