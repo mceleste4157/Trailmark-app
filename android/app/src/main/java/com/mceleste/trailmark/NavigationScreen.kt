@@ -9,14 +9,15 @@ import androidx.car.app.Screen
 import androidx.car.app.SurfaceCallback
 import androidx.car.app.SurfaceContainer
 import androidx.car.app.navigation.model.Distance
+import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.car.app.navigation.model.RoutingInfo
 import androidx.car.app.navigation.model.Step
 import androidx.car.app.navigation.model.TravelEstimate
-import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.car.app.model.Action
 import androidx.car.app.model.ActionStrip
 import androidx.car.app.model.CarText
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 class NavigationScreen(carContext: CarContext) : Screen(carContext) {
     private val follower = RouteFollower()
@@ -26,24 +27,10 @@ class NavigationScreen(carContext: CarContext) : Screen(carContext) {
         redrawSurface()
     }
 
-    // Placeholder route until the native Supabase/local route adapter is connected.
-    // This is deliberately a real route-following object, not a fake UI-only state.
-    private val demoRoute = TrailmarkRoute(
-        id = "demo",
-        name = "Trailmark Demo Route",
-        points = listOf(
-            TrailmarkPoint(0.0, 0.0),
-            TrailmarkPoint(0.001, 0.001),
-            TrailmarkPoint(0.002, 0.002)
-        ),
-        distanceMeters = 314.0
-    )
-
+    private var route: TrailmarkRoute? = null
     private var surface: SurfaceContainer? = null
 
     init {
-        follower.start(demoRoute)
-        locationService.start()
         carContext.getCarService(androidx.car.app.AppManager::class.java)
             .setSurfaceCallback(object : SurfaceCallback {
                 override fun onSurfaceAvailable(surfaceContainer: SurfaceContainer) {
@@ -55,11 +42,30 @@ class NavigationScreen(carContext: CarContext) : Screen(carContext) {
                     if (surface === surfaceContainer) surface = null
                 }
             })
+
+        thread(start = true, name = "trailmark-route-loader") {
+            val loaded = RouteRepository(carContext).fetchRoutes().firstOrNull()
+            if (loaded != null) {
+                route = loaded
+                follower.start(loaded)
+                try { locationService.start() } catch (_: SecurityException) {}
+                invalidate()
+                redrawSurface()
+            }
+        }
     }
 
     override fun onGetTemplate(): androidx.car.app.model.Template {
+        val r = route
+        if (r == null) {
+            return NavigationTemplate.Builder()
+                .setNavigationInfo(RoutingInfo.Builder().setLoading(true).build())
+                .setActionStrip(ActionStrip.Builder().addAction(Action.APP_ICON).build())
+                .build()
+        }
+
         val state = follower.state
-        val remaining = state.distanceRemainingMeters ?: 0.0
+        val remaining = state.distanceRemainingMeters ?: r.distanceMeters
         val cue = when (state.status) {
             NavigationStatus.ARRIVED -> "Arrived at destination"
             NavigationStatus.OFF_ROUTE -> "Off route — return to the trail"
@@ -72,7 +78,7 @@ class NavigationScreen(carContext: CarContext) : Screen(carContext) {
             .build()
 
         val eta = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(
-            ((remaining / 5.0).coerceAtLeast(0.0)).toLong()
+            (remaining / 5.0).coerceAtLeast(0.0).toLong()
         )
         val estimate = TravelEstimate.Builder(
             Distance.create(remaining, Distance.UNIT_METERS),
@@ -82,11 +88,7 @@ class NavigationScreen(carContext: CarContext) : Screen(carContext) {
         return NavigationTemplate.Builder()
             .setNavigationInfo(routing)
             .setDestinationTravelEstimate(estimate)
-            .setActionStrip(
-                ActionStrip.Builder()
-                    .addAction(Action.APP_ICON)
-                    .build()
-            )
+            .setActionStrip(ActionStrip.Builder().addAction(Action.APP_ICON).build())
             .build()
     }
 
@@ -106,14 +108,16 @@ class NavigationScreen(carContext: CarContext) : Screen(carContext) {
                 style = Paint.Style.STROKE
                 strokeWidth = 8f
             }
-            val path = Path()
-            val points = demoRoute.points
-            points.forEachIndexed { index, p ->
-                val x = 100f + index * 250f
-                val y = 250f + index * 80f
-                if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            val r = route
+            if (r != null && r.points.isNotEmpty()) {
+                val path = Path()
+                r.points.forEachIndexed { index, p ->
+                    val x = 100f + index * 20f
+                    val y = 250f + kotlin.math.sin(index / 5.0) * 80f + 300f
+                    if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                }
+                canvas.drawPath(path, paint)
             }
-            canvas.drawPath(path, paint)
         } finally {
             s.unlockCanvasAndPost(canvas)
             s.release()
