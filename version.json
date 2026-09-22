@@ -1,6 +1,12 @@
 {
-  "current": "1.42",
+  "current": "1.43",
   "history": [
+    {
+      "version": "1.43",
+      "date": "2026-09-22",
+      "summary": "Fix \"Zoom Level Not Supported\" placeholder showing in the radar overlay",
+      "commit": "a71bb26"
+    },
     {
       "version": "1.42",
       "date": "2026-09-22",
