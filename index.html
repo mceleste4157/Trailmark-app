@@ -65,21 +65,39 @@
   <div id="panel-body"></div>
 </div>
 
-<div id="stats-hud" class="hidden">
-  <span class="stat"><span class="stat-value" id="stat-speed">--</span><span class="stat-label">mph</span></span>
-  <button class="stat" id="btn-orientation" title="Tap to toggle North-up / direction-of-travel-up">
-    <span class="stat-arrow" id="stat-heading-arrow">&uarr;</span><span class="stat-value" id="stat-heading">--</span><span class="stat-mode" id="stat-orientation-mode">N-UP</span>
-  </button>
-  <span class="stat"><span class="stat-value" id="stat-elevation">--</span><span class="stat-label">ft elev</span></span>
-  <button class="stat" id="btn-tilt" title="Tap to enable the tilt/roll sensor (mount the phone the way it'll ride in the vehicle)">
-    <span class="stat-value" id="stat-tilt">--</span><span class="stat-label">tilt</span>
+<div id="compass-ribbon" class="hidden" title="Tap to toggle North-up / direction-of-travel-up">
+  <div id="compass-track"></div>
+  <div id="compass-indicator"></div>
+  <span id="stat-orientation-mode">N-UP</span>
+</div>
+
+<button id="speed-circle" class="hidden">
+  <span id="stat-speed">--</span>
+  <span class="speed-circle-label">mph</span>
+</button>
+
+<div id="stats-card" class="hidden">
+  <div class="stats-card-item">
+    <span class="stats-card-value" id="stat-time">--</span>
+    <span class="stats-card-label">Time</span>
+  </div>
+  <div class="stats-card-item">
+    <span class="stats-card-value" id="stat-distance">--</span>
+    <span class="stats-card-label">Distance</span>
+  </div>
+  <div class="stats-card-item">
+    <span class="stats-card-value" id="stat-elevation">--</span>
+    <span class="stats-card-label">Elevation (ft)</span>
+  </div>
+  <button class="stats-card-item" id="btn-tilt" title="Tap to enable the tilt/roll sensor (mount the phone the way it'll ride in the vehicle)">
+    <span class="stats-card-value" id="stat-tilt">--</span>
+    <span class="stats-card-label">Tilt</span>
   </button>
 </div>
 
 <div id="recording-hud" class="hidden">
   <span id="recording-dot"></span>
-  <span id="recording-time">00:00</span>
-  <span id="recording-dist">0.00 mi</span>
+  <span>Recording</span>
   <button id="btn-stop-recording">Stop &amp; Save</button>
 </div>
 
