@@ -34,6 +34,29 @@ btnTheme.addEventListener("click", () => {
   applyTheme(currentTheme);
 });
 
+// ---------- Topbar height tracking ----------
+// #topbar-right's buttons wrap onto a second line once there isn't room
+// for them all in one row (narrow phones, or just enough toggles enabled
+// at once) — everything below it (the location/update/error/maintenance
+// banners, the speed/heading/elevation/tilt stats HUD, the recording and
+// route-planning HUDs) used to sit at a fixed pixel offset that assumed
+// a single-row topbar, so a wrapped second row visibly overlapped them
+// instead of pushing them down. Keeping the topbar's real height in a
+// CSS variable and having all of those position off of it (see
+// style.css) fixes it for every one of them at once, and keeps working
+// if the topbar's height changes again for some other reason later.
+const topbarEl = document.getElementById("topbar");
+function updateTopbarHeightVar() {
+  document.documentElement.style.setProperty("--topbar-height", `${topbarEl.offsetHeight}px`);
+}
+updateTopbarHeightVar();
+window.addEventListener("resize", updateTopbarHeightVar);
+window.addEventListener("orientationchange", updateTopbarHeightVar);
+// The ResizeObserver catches content-driven height changes the above two
+// don't (e.g. the basemap label's own text width reflowing the wrap
+// point without the *window* itself resizing).
+new ResizeObserver(updateTopbarHeightVar).observe(topbarEl);
+
 // OpenFreeMap (https://openfreemap.org) — a free, no-API-key, no-usage-limit
 // hosted basemap, used only while online. It's what makes the map show a
 // normal world/US view by default instead of a blank screen; offline use
@@ -241,7 +264,7 @@ function updateStatsHud(position) {
 // gauge. Not a certified inclinometer, just a heads-up.
 const btnTilt = document.getElementById("btn-tilt");
 const statTiltEl = document.getElementById("stat-tilt");
-const TILT_WARN_DEGREES = 25;
+const TILT_WARN_DEGREES = 45;
 let tiltListening = false;
 
 function formatTilt(gamma) {
@@ -442,10 +465,20 @@ function breadcrumbPointsByDay() {
 function drawBreadcrumbLine() {
   const byDay = breadcrumbPointsByDay();
   const nextIds = new Set();
+  // Breadcrumbs log passively in the background the whole time the app
+  // is open, including during an explicit Go & Track recording — without
+  // this, today's dashed breadcrumb line and the recording's own solid
+  // live-trail line both draw the same path at once, which just reads as
+  // a rendering bug ("why are there two trails"). The live trail is the
+  // more precise, real-time one, so today's breadcrumb line stays
+  // suppressed (not deleted — still logging underneath) for as long as a
+  // recording is actually running.
+  const todayKey = GpsRecorder.isRecording() ? breadcrumbDayKey(Date.now()) : null;
 
   Array.from(byDay.entries()).forEach(([dayKey, points], i) => {
     if (points.length < 2) return; // need at least 2 points to draw a line
     if (!isBreadcrumbDayVisible(dayKey)) return; // hidden — leave out of nextIds so cleanup below removes it
+    if (dayKey === todayKey) return; // suppressed while recording — see comment above
     const sourceId = BREADCRUMB_SOURCE_PREFIX + dayKey;
     nextIds.add(sourceId);
     const color = breadcrumbDayColor(dayKey, i);
@@ -1310,6 +1343,44 @@ function drawLiveTrail(points) {
 // date, renameable from My Content). Also starts sharing your live
 // location with the crew if you're signed in — "Go" is meant as one tap
 // for both, not two separate steps.
+// ---------- Screen wake lock (keep the display on during an active session) ----------
+// Without this, the phone's own screen-timeout dims and locks mid-ride —
+// exactly when you're relying on the map/stats HUD being visible (mounted
+// in a dash/window mount, glancing at it while driving). Held only while
+// a GPS recording or route-planning session is actually running, not
+// just because the app happens to be open — no reason to fight the OS's
+// normal battery-saving dimming the rest of the time.
+let wakeLock = null;
+
+async function requestWakeLock() {
+  if (!("wakeLock" in navigator) || wakeLock) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => {
+      wakeLock = null;
+    });
+  } catch (err) {
+    console.warn("Could not acquire a screen wake lock:", err.message);
+  }
+}
+
+async function releaseWakeLock() {
+  if (!wakeLock) return;
+  await wakeLock.release().catch(() => {});
+  wakeLock = null;
+}
+
+// The OS/browser force-releases the lock whenever the tab is backgrounded
+// — re-acquire it if a session is still active once the page becomes
+// visible again, otherwise a brief app-switch (checking a text, glancing
+// at another app) would silently leave the screen dimming for the rest
+// of the ride.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && (GpsRecorder.isRecording() || planningRoute)) {
+    requestWakeLock();
+  }
+});
+
 function startRecordingNow() {
   if (GpsRecorder.isRecording()) {
     openPanel("Ride in progress", `<p>You're already tracking a ride. Use the Stop &amp; Save button on the map.</p>`);
@@ -1335,6 +1406,7 @@ function startRecordingNow() {
   }, 1000);
   window.__pendingTrailName = `Ride – ${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
   if (GroupBackend.enabled && session) activateSocial();
+  requestWakeLock();
 }
 
 document.getElementById("btn-stop-recording").addEventListener("click", async () => {
@@ -1343,9 +1415,16 @@ document.getElementById("btn-stop-recording").addEventListener("click", async ()
   recordingHud.classList.add("hidden");
   recordingTime.textContent = "00:00";
   recordingDist.textContent = "0.00 mi";
+  releaseWakeLock();
 
   if (result.points.length < 2) {
     alert("Trail too short to save (need at least 2 GPS points).");
+    if (liveTrailSourceId) {
+      map.removeLayer(liveTrailSourceId);
+      map.removeSource(liveTrailSourceId);
+      liveTrailSourceId = null;
+    }
+    drawBreadcrumbLine(); // recording's over — un-suppress today's breadcrumb line
     return;
   }
 
@@ -1365,6 +1444,7 @@ document.getElementById("btn-stop-recording").addEventListener("click", async ()
     map.removeSource(liveTrailSourceId);
     liveTrailSourceId = null;
   }
+  drawBreadcrumbLine(); // recording's over — un-suppress today's breadcrumb line
 });
 
 // ---------- Route planning (tap the map to lay out a route ahead of time) ----------
@@ -1397,6 +1477,7 @@ function startPlanningRoute(name) {
   updatePlanningHud();
   map.getCanvas().style.cursor = "crosshair";
   map.on("click", onPlanningMapClick);
+  requestWakeLock();
 }
 
 function onPlanningMapClick(e) {
@@ -1421,6 +1502,7 @@ function stopPlanningRoute() {
     liveTrailSourceId = null;
   }
   planningPoints = [];
+  releaseWakeLock();
 }
 
 document.getElementById("btn-planning-undo").addEventListener("click", () => {

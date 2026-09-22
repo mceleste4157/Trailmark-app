@@ -10,6 +10,11 @@
   --text: #e5e7eb;
   --text-dim: #9ca3af;
   --border: #1f2937;
+  /* Kept in sync with #topbar's actual rendered height by JS (see
+     updateTopbarHeightVar in js/app.js) — the topbar-right button row
+     wraps onto a second line at narrower widths, so a fixed pixel
+     fallback here would only ever be right for one specific case. */
+  --topbar-height: 56px;
 }
 
 [data-theme="light"] {
@@ -63,7 +68,7 @@ html, body {
 #locate-banner {
   position: absolute;
   z-index: 6;
-  top: 60px;
+  top: calc(var(--topbar-height) + 8px);
   left: 50%;
   transform: translateX(-50%);
   max-width: 90vw;
@@ -81,7 +86,7 @@ html, body {
 #update-banner {
   position: absolute;
   z-index: 6;
-  top: 104px;
+  top: calc(var(--topbar-height) + 52px);
   left: 50%;
   transform: translateX(-50%);
   max-width: 90vw;
@@ -100,7 +105,7 @@ html, body {
 #error-banner {
   position: absolute;
   z-index: 6;
-  top: 148px;
+  top: calc(var(--topbar-height) + 96px);
   left: 50%;
   transform: translateX(-50%);
   max-width: 90vw;
@@ -119,7 +124,7 @@ html, body {
 #maintenance-reminder-banner {
   position: absolute;
   z-index: 6;
-  top: 192px;
+  top: calc(var(--topbar-height) + 140px);
   left: 50%;
   transform: translateX(-50%);
   max-width: 90vw;
@@ -363,7 +368,7 @@ html, body {
 #stats-hud {
   position: absolute;
   z-index: 12;
-  top: 52px;
+  top: calc(var(--topbar-height) + 8px);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -465,7 +470,7 @@ html, body {
 #recording-hud {
   position: absolute;
   z-index: 15;
-  top: 96px;
+  top: calc(var(--topbar-height) + 52px);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -483,7 +488,7 @@ html, body {
 #planning-hud {
   position: absolute;
   z-index: 15;
-  top: 96px;
+  top: calc(var(--topbar-height) + 52px);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
