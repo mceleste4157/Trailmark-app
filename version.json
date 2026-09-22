@@ -1,6 +1,12 @@
 {
-  "current": "1.37",
+  "current": "1.38",
   "history": [
+    {
+      "version": "1.38",
+      "date": "2026-09-22",
+      "summary": "Add maintenance reminders with an honest notification story",
+      "commit": "562d5fe"
+    },
     {
       "version": "1.37",
       "date": "2026-09-22",
