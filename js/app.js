@@ -569,19 +569,11 @@ function toggle3dTerrain() {
     remove3dTerrainLayers();
     map.easeTo({ pitch: 0, duration: 800 });
   }
-  const btn = document.getElementById("btn-3d");
-  if (btn) btn.classList.toggle("active-pill", terrain3dOn);
 }
-
-document.getElementById("btn-3d")?.addEventListener("click", toggle3dTerrain);
 
 // ---------- Cell tower locations (rough coverage proxy) ----------
 let cellTowersOn = false;
 const CELL_SOURCE_ID = "cell-towers";
-
-if (CellCoverage.enabled) {
-  document.getElementById("btn-cell").classList.remove("hidden");
-}
 
 async function refreshCellTowerLayer() {
   const towers = await CellCoverage.fetchTowers(map.getBounds());
@@ -611,8 +603,6 @@ async function toggleCellTowers() {
     return;
   }
   cellTowersOn = !cellTowersOn;
-  const btn = document.getElementById("btn-cell");
-  btn.classList.toggle("active-pill", cellTowersOn);
   if (!cellTowersOn) {
     if (map.getLayer(CELL_SOURCE_ID)) map.removeLayer(CELL_SOURCE_ID);
     if (map.getSource(CELL_SOURCE_ID)) map.removeSource(CELL_SOURCE_ID);
@@ -623,11 +613,9 @@ async function toggleCellTowers() {
   } catch (err) {
     alert("Could not load cell tower data: " + err.message);
     cellTowersOn = false;
-    btn.classList.remove("active-pill");
   }
 }
 
-document.getElementById("btn-cell")?.addEventListener("click", toggleCellTowers);
 document.getElementById("btn-settings")?.addEventListener("click", openSettingsPanel);
 
 let trailSourceCounter = 0;
@@ -3097,8 +3085,6 @@ async function openWeatherPanel() {
   }
 }
 
-document.getElementById("btn-weather")?.addEventListener("click", openWeatherPanel);
-
 // ---------- Rain radar overlay ----------
 // RainViewer's public API (rainviewer.com) — free, no API key, CORS-
 // enabled, widely used for exactly this. Shows only the latest frame
@@ -3133,7 +3119,6 @@ async function addRadarLayer() {
     map.addSource(RADAR_SOURCE_ID, { type: "raster", tiles: [tileUrl], tileSize: 256, attribution: "Radar: RainViewer" });
     map.addLayer({ id: "radar-layer", type: "raster", source: RADAR_SOURCE_ID, paint: { "raster-opacity": 0.65 } });
   }
-  updateRadarButtonTitle();
 }
 
 function removeRadarLayer() {
@@ -3142,21 +3127,11 @@ function removeRadarLayer() {
   radarFrameTime = null;
 }
 
-function updateRadarButtonTitle() {
-  const btn = document.getElementById("btn-radar");
-  if (!btn) return;
-  btn.title =
-    radarOn && radarFrameTime
-      ? `Radar as of ${new Date(radarFrameTime).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} — tap to hide`
-      : "Toggle rain radar overlay";
-}
-
 async function toggleRadar() {
   if (!navigator.onLine && !radarOn) {
     alert("Radar needs an internet connection.");
     return;
   }
-  const btn = document.getElementById("btn-radar");
   if (!radarOn) {
     try {
       await addRadarLayer();
@@ -3174,11 +3149,55 @@ async function toggleRadar() {
     radarRefreshTimer = null;
     removeRadarLayer();
   }
-  if (btn) btn.classList.toggle("active-pill", radarOn);
-  updateRadarButtonTitle();
 }
 
-document.getElementById("btn-radar")?.addEventListener("click", toggleRadar);
+// ---------- Map Layers menu ----------
+// Consolidates the 3D/Weather/Radar/Cell-coverage toggles that used to
+// be their own topbar buttons — at real phone widths that row simply
+// didn't fit (the status pill was running off the edge of the screen).
+// Same tools-grid pattern as the Tools panel, which this exists right
+// next to conceptually.
+async function openLayersPanel() {
+  const radarLabel = radarOn && radarFrameTime ? `Radar (${new Date(radarFrameTime).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })})` : "Radar";
+  openPanel(
+    "Map Layers",
+    `
+    <div class="tools-grid">
+      <button class="tools-grid-btn" id="layers-3d-btn">
+        <span class="tools-grid-icon${terrain3dOn ? " active" : ""}">🏔️</span><span>3D Terrain</span>
+      </button>
+      <button class="tools-grid-btn" id="layers-radar-btn">
+        <span class="tools-grid-icon${radarOn ? " active" : ""}">📡</span><span>${radarLabel}</span>
+      </button>
+      ${
+        CellCoverage.enabled
+          ? `<button class="tools-grid-btn" id="layers-cell-btn">
+        <span class="tools-grid-icon${cellTowersOn ? " active" : ""}">📶</span><span>Cell Coverage</span>
+      </button>`
+          : ""
+      }
+      <button class="tools-grid-btn" id="layers-weather-btn">
+        <span class="tools-grid-icon">🌤️</span><span>Weather</span>
+      </button>
+    </div>
+    `
+  );
+  document.getElementById("layers-3d-btn").addEventListener("click", async () => {
+    await toggle3dTerrain();
+    openLayersPanel();
+  });
+  document.getElementById("layers-radar-btn").addEventListener("click", async () => {
+    await toggleRadar();
+    openLayersPanel();
+  });
+  document.getElementById("layers-cell-btn")?.addEventListener("click", async () => {
+    await toggleCellTowers();
+    openLayersPanel();
+  });
+  document.getElementById("layers-weather-btn").addEventListener("click", openWeatherPanel);
+}
+
+document.getElementById("btn-layers")?.addEventListener("click", openLayersPanel);
 
 // GPX 1.1 — the standard format for GPS tracks, readable by basically
 // every mapping/GPS tool (Garmin, Google Earth, CalTopo, onX's own
@@ -4091,6 +4110,16 @@ let waitingWorker = null;
 
 function showUpdateBanner(worker) {
   waitingWorker = worker;
+  // Auto-apply immediately when nothing's actually at risk — most opens
+  // aren't mid-recording, and requiring a manual tap every single time
+  // just to see the current version is the "why do I have to hard
+  // refresh" problem this exists to avoid. Only fall back to the banner
+  // (a deliberate, user-initiated update) when a GPS recording or
+  // route-planning session is actually in progress and could be lost.
+  if (!GpsRecorder.isRecording() && !planningRoute) {
+    worker.postMessage({ type: "SKIP_WAITING" });
+    return;
+  }
   updateBanner.classList.remove("hidden");
 }
 

@@ -193,9 +193,7 @@ html, body {
 }
 
 #btn-basemap,
-#btn-3d,
-#btn-weather,
-#btn-radar {
+#btn-layers {
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -205,21 +203,9 @@ html, body {
   cursor: pointer;
 }
 
-#btn-3d.active-pill,
-#btn-radar.active-pill,
-#btn-cell.active-pill {
+.tools-grid-icon.active {
+  background: rgba(34, 197, 94, 0.18);
   border-color: var(--accent-bright);
-  color: var(--accent-bright);
-}
-
-#btn-cell {
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  color: var(--text);
-  cursor: pointer;
 }
 
 #btn-cell.hidden { display: none; }
