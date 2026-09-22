@@ -1,5 +1,39 @@
 import * as maplibregl from "../vendor/maplibre-gl/maplibre-gl.mjs";
 
+// ---------- Light/dark theme ----------
+// Applied first, before anything else, so a returning visitor who chose
+// light mode doesn't see a flash of the dark theme while the rest of the
+// page sets up.
+const THEME_KEY = "trailmark_theme";
+const btnTheme = document.getElementById("btn-theme");
+function applyTheme(theme) {
+  if (theme === "light") {
+    document.documentElement.dataset.theme = "light";
+    btnTheme.textContent = "🌙";
+    btnTheme.title = "Switch to dark mode";
+  } else {
+    delete document.documentElement.dataset.theme;
+    btnTheme.textContent = "☀️";
+    btnTheme.title = "Switch to light mode";
+  }
+}
+let currentTheme = "dark";
+try {
+  currentTheme = localStorage.getItem(THEME_KEY) || "dark";
+} catch {
+  // Private browsing / storage blocked — just stays on the default.
+}
+applyTheme(currentTheme);
+btnTheme.addEventListener("click", () => {
+  currentTheme = currentTheme === "light" ? "dark" : "light";
+  try {
+    localStorage.setItem(THEME_KEY, currentTheme);
+  } catch {
+    // Preference won't persist across reloads, but the toggle still works.
+  }
+  applyTheme(currentTheme);
+});
+
 // OpenFreeMap (https://openfreemap.org) — a free, no-API-key, no-usage-limit
 // hosted basemap, used only while online. It's what makes the map show a
 // normal world/US view by default instead of a blank screen; offline use
