@@ -1,6 +1,12 @@
 {
-  "current": "1.22",
+  "current": "1.23",
   "history": [
+    {
+      "version": "1.23",
+      "date": "2026-09-22",
+      "summary": "Tools icon grid, compass ribbon, speed circle, stats card (onX-style)",
+      "commit": "53a0ff5"
+    },
     {
       "version": "1.22",
       "date": "2026-09-22",
