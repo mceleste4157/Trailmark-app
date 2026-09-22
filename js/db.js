@@ -72,6 +72,7 @@ const TrailStore = {
       endedAt,
       difficulty: difficulty || null, // 1-10, onX-style technical difficulty rating
       createdAt: Date.now(),
+      remoteId: null, // set once this trail has been pushed to personal_trails — see syncPersonalData() in js/app.js
     });
   },
   async setDifficulty(id, difficulty) {
@@ -95,6 +96,16 @@ const TrailStore = {
   async restoreTrail(trail) {
     return db.trails.put(trail);
   },
+  async setRemoteId(id, remoteId) {
+    return db.trails.update(id, { remoteId });
+  },
+  // Inserts a trail pulled down from personal_trails on another device —
+  // a plain saveTrail() would stamp createdAt as "now" and leave
+  // remoteId unset, which would make the very next sync push it right
+  // back up as if it were a brand new local trail.
+  async importSynced(trail) {
+    return db.trails.add(trail);
+  },
 };
 
 // trailhead | campsite | fuel | water_crossing | obstacle | hazard | other
@@ -109,6 +120,7 @@ const WaypointStore = {
       note: note || "",
       category: category || "other",
       createdAt: Date.now(),
+      remoteId: null, // set once this waypoint has been pushed to personal_waypoints — see syncPersonalData() in js/app.js
     });
   },
   async listWaypoints() {
@@ -130,6 +142,15 @@ const WaypointStore = {
   // "Undo" toast right after a delete.
   async restoreWaypoint(wp) {
     return db.waypoints.put(wp);
+  },
+  async setRemoteId(id, remoteId) {
+    return db.waypoints.update(id, { remoteId });
+  },
+  // Inserts a waypoint pulled down from personal_waypoints on another
+  // device — see TrailStore.importSynced's comment for why this can't
+  // just be saveWaypoint().
+  async importSynced(wp) {
+    return db.waypoints.add(wp);
   },
 };
 

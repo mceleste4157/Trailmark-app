@@ -257,6 +257,87 @@ create policy "authenticated users can send messages"
   on messages for insert
   with check (auth.role() = 'authenticated' and auth.uid() = user_id);
 
+-- ---------- Personal trails & waypoints (private per-user backup) ----------
+-- Unlike shared_trails/shared_waypoints above (visible to every signed-in
+-- user via the "Share" button), these mirror a user's own local My
+-- Content data — every recorded/planned/imported trail and every
+-- standalone waypoint, pushed here once they're signed in so the app can
+-- restore them after a reinstall or on a new device. RLS restricts every
+-- operation, including select, to the owning row's user_id — nobody else
+-- can ever read these, unlike the shared_* tables' "any authenticated
+-- user" read policy. created_at/started_at/ended_at are epoch
+-- milliseconds (not timestamptz) to match Dexie's Date.now() values on
+-- the client, so a synced row round-trips without a timezone/format
+-- conversion. See js/group/backend.js's upsertPersonalTrail/Waypoint and
+-- js/app.js's syncPersonalData() for the client side of this.
+create table if not exists personal_trails (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references profiles(id) on delete cascade,
+  name text not null,
+  kind text not null default 'recorded', -- 'recorded' | 'planned' | 'imported'
+  points jsonb not null,
+  distance_meters double precision,
+  started_at bigint,
+  ended_at bigint,
+  difficulty smallint check (difficulty is null or (difficulty between 1 and 10)),
+  created_at bigint not null
+);
+
+alter table personal_trails enable row level security;
+
+drop policy if exists "users can read their own personal trails" on personal_trails;
+create policy "users can read their own personal trails"
+  on personal_trails for select
+  using (auth.uid() = user_id);
+
+drop policy if exists "users can insert their own personal trails" on personal_trails;
+create policy "users can insert their own personal trails"
+  on personal_trails for insert
+  with check (auth.uid() = user_id);
+
+drop policy if exists "users can update their own personal trails" on personal_trails;
+create policy "users can update their own personal trails"
+  on personal_trails for update
+  using (auth.uid() = user_id);
+
+drop policy if exists "users can delete their own personal trails" on personal_trails;
+create policy "users can delete their own personal trails"
+  on personal_trails for delete
+  using (auth.uid() = user_id);
+
+create table if not exists personal_waypoints (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references profiles(id) on delete cascade,
+  name text not null,
+  lat double precision not null,
+  lng double precision not null,
+  note text default '',
+  category text not null default 'other',
+  created_at bigint not null
+);
+
+alter table personal_waypoints enable row level security;
+
+drop policy if exists "users can read their own personal waypoints" on personal_waypoints;
+create policy "users can read their own personal waypoints"
+  on personal_waypoints for select
+  using (auth.uid() = user_id);
+
+drop policy if exists "users can insert their own personal waypoints" on personal_waypoints;
+create policy "users can insert their own personal waypoints"
+  on personal_waypoints for insert
+  with check (auth.uid() = user_id);
+
+drop policy if exists "users can update their own personal waypoints" on personal_waypoints;
+create policy "users can update their own personal waypoints"
+  on personal_waypoints for update
+  using (auth.uid() = user_id);
+
+drop policy if exists "users can delete their own personal waypoints" on personal_waypoints;
+create policy "users can delete their own personal waypoints"
+  on personal_waypoints for delete
+  using (auth.uid() = user_id);
+
 -- ---------- Error reports ----------
 -- User-triggered ("tap to report") client error reports — a lightweight
 -- way to actually hear about bugs instead of relying on word-of-mouth.

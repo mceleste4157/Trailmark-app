@@ -11,9 +11,14 @@ alternative to onX built on open web technology.
   waypoints, and GPS tracks locally in the browser. Works fully offline.
 - **Service Worker** — caches the app shell (HTML/CSS/JS) so the app itself
   loads with zero connectivity.
-- **[Supabase](https://supabase.com/)** (optional, not wired up yet) — free
-  tier Postgres + PostGIS backend for syncing trails across devices when
-  online. The app works fully standalone without it.
+- **[Supabase](https://supabase.com/)** (optional — the app works fully
+  standalone without it) — free-tier Postgres backend for two things once
+  you sign in: crew features (shared trails/waypoints/photos, live
+  location, chat — see the "Share" button and Chat tab) and a private
+  backup of your own My Content (`personal_trails`/`personal_waypoints`,
+  visible only to you) so it survives a lost phone or carries over to a
+  new device. See `js/group/config.js` to activate it and `sql/schema.sql`
+  for the tables/policies.
 
 No build step. No framework. Plain HTML/CSS/JS, same as a static site.
 

@@ -1182,6 +1182,7 @@ function openWaypointPanel() {
         const lng = pos.coords.longitude;
         await WaypointStore.saveWaypoint({ name, lat, lng, note, category });
         await refreshWaypointMarkers();
+        syncPersonalData();
 
         const shareBox = document.getElementById("wp-share");
         if (shareBox && shareBox.checked && session) {
@@ -1296,6 +1297,7 @@ document.getElementById("btn-stop-recording").addEventListener("click", async ()
     startedAt: result.startedAt,
     endedAt: result.endedAt,
   });
+  syncPersonalData();
 
   if (liveTrailSourceId) {
     map.removeLayer(liveTrailSourceId);
@@ -1392,6 +1394,7 @@ document.getElementById("btn-planning-finish").addEventListener("click", async (
     startedAt: null,
     endedAt: null,
   });
+  syncPersonalData();
   alert(`Saved "${name}" — find it under My Content.`);
 });
 
@@ -2016,9 +2019,16 @@ async function openTrailsPanel() {
         if (!confirm(`Delete "${trail.name}"?`)) return;
         await TrailStore.deleteTrail(id);
         openTrailsPanel();
+        // Best-effort: if this was never backed up (not signed in, or
+        // sync hasn't run yet), there's nothing remote to remove, and a
+        // failure here (offline) just means the remote copy outlives the
+        // local delete until the next sync — acceptable for a backup, see
+        // syncPersonalData()'s comment.
+        if (trail.remoteId && session) GroupBackend.deletePersonalTrail(trail.remoteId).catch(() => {});
         showUndoToast(`Deleted "${trail.name}"`, async () => {
           await TrailStore.restoreTrail(trail);
           openTrailsPanel();
+          if (trail.remoteId && session) GroupBackend.upsertPersonalTrail(trail).catch(() => {});
         });
       } else if (action === "rename") {
         const trail = await TrailStore.getTrail(id);
@@ -2026,12 +2036,15 @@ async function openTrailsPanel() {
         if (name === null || !name.trim()) return;
         await TrailStore.renameTrail(id, name.trim());
         openTrailsPanel();
+        if (trail.remoteId && session) GroupBackend.upsertPersonalTrail({ ...trail, name: name.trim() }).catch(() => {});
       } else if (action === "rate") {
+        const trail = await TrailStore.getTrail(id);
         const input = prompt("Technical difficulty, 1 (easy) to 10 (extreme). Leave blank to clear.");
         if (input === null) return;
         const value = input.trim() === "" ? null : Math.max(1, Math.min(10, parseInt(input, 10) || 0));
         await TrailStore.setDifficulty(id, value);
         openTrailsPanel();
+        if (trail.remoteId && session) GroupBackend.upsertPersonalTrail({ ...trail, difficulty: value }).catch(() => {});
       } else if (action === "export") {
         const trail = await TrailStore.getTrail(id);
         downloadFile(`${trail.name.replace(/[^a-z0-9]+/gi, "-")}.gpx`, trailToGpx(trail), "application/gpx+xml");
@@ -2070,10 +2083,12 @@ async function openTrailsPanel() {
         await WaypointStore.deleteWaypoint(id);
         await refreshWaypointMarkers();
         openTrailsPanel();
+        if (wp.remoteId && session) GroupBackend.deletePersonalWaypoint(wp.remoteId).catch(() => {});
         showUndoToast(`Deleted "${wp.name}"`, async () => {
           await WaypointStore.restoreWaypoint(wp);
           await refreshWaypointMarkers();
           openTrailsPanel();
+          if (wp.remoteId && session) GroupBackend.upsertPersonalWaypoint(wp).catch(() => {});
         });
       } else if (action === "rename") {
         const wp = await WaypointStore.getWaypoint(id);
@@ -2082,6 +2097,7 @@ async function openTrailsPanel() {
         await WaypointStore.updateWaypoint(id, { name: name.trim(), note: wp.note, category: wp.category });
         await refreshWaypointMarkers();
         openTrailsPanel();
+        if (wp.remoteId && session) GroupBackend.upsertPersonalWaypoint({ ...wp, name: name.trim() }).catch(() => {});
       } else if (action === "export") {
         const wp = await WaypointStore.getWaypoint(id);
         downloadFile(`${wp.name.replace(/[^a-z0-9]+/gi, "-")}.gpx`, waypointToGpx(wp), "application/gpx+xml");
@@ -2235,6 +2251,7 @@ async function importGpxFile(file) {
     await WaypointStore.saveWaypoint({ name: wpt.name, lat: wpt.lat, lng: wpt.lng, note: wpt.note, category: "other" });
   }
   if (waypoints.length) await refreshWaypointMarkers();
+  if (tracks.length || waypoints.length) syncPersonalData();
   if (firstImportedId !== null) showTrailOnMap(await TrailStore.getTrail(firstImportedId));
 
   const parts = [];
@@ -2323,12 +2340,98 @@ if (GroupBackend.enabled) {
   GroupBackend.getSession()
     .then((s) => {
       session = s;
+      if (s) syncPersonalData();
     })
     .catch((err) => console.warn("Could not restore session:", err));
   GroupBackend.onAuthChange((s) => {
     session = s;
     if (!s) deactivateSocial();
+    else syncPersonalData();
   });
+}
+
+// Private backup/restore of My Content (TrailStore/WaypointStore) —
+// distinct from the "Share" button's shared_trails/shared_waypoints,
+// which are visible to every signed-in user. This only ever talks to
+// personal_trails/personal_waypoints, which RLS locks to auth.uid(), so
+// nothing here is visible to anyone but the signed-in owner.
+//
+// Deliberately simple, not a full two-way sync: it pushes local records
+// that have never been synced (no remoteId yet) and pulls remote records
+// this device doesn't have yet (matched by remoteId). It does NOT
+// reconcile edits made to the same record on two different devices, and
+// it does NOT propagate a delete made on one device to a second device
+// that already pulled a copy — deletes are pushed to the remote row at
+// the moment you delete locally (see the trail/waypoint delete handlers
+// below), so the backup itself stays accurate, but a second device keeps
+// its already-downloaded local copy until you delete it there too. For a
+// single-rider "don't lose my trails" use case that's the right
+// trade-off; it avoids needing conflict resolution or tombstones for
+// data that's realistically edited from one device at a time.
+let personalSyncInFlight = null;
+async function syncPersonalData() {
+  if (!GroupBackend.enabled || !session) return;
+  // Coalesce overlapping calls (e.g. a save right after sign-in both
+  // trigger this) into the one already running instead of racing two
+  // push passes against the same unsynced-local-record set.
+  if (personalSyncInFlight) return personalSyncInFlight;
+  personalSyncInFlight = (async () => {
+    try {
+      const [localTrails, localWaypoints] = await Promise.all([TrailStore.listTrails(), WaypointStore.listWaypoints()]);
+
+      for (const t of localTrails) {
+        if (t.remoteId) continue;
+        const remote = await GroupBackend.upsertPersonalTrail(t);
+        await TrailStore.setRemoteId(t.id, remote.id);
+      }
+      for (const wp of localWaypoints) {
+        if (wp.remoteId) continue;
+        const remote = await GroupBackend.upsertPersonalWaypoint(wp);
+        await WaypointStore.setRemoteId(wp.id, remote.id);
+      }
+
+      const knownTrailRemoteIds = new Set(localTrails.map((t) => t.remoteId).filter(Boolean));
+      const knownWaypointRemoteIds = new Set(localWaypoints.map((wp) => wp.remoteId).filter(Boolean));
+      const [remoteTrails, remoteWaypoints] = await Promise.all([GroupBackend.listPersonalTrails(), GroupBackend.listPersonalWaypoints()]);
+
+      for (const r of remoteTrails) {
+        if (knownTrailRemoteIds.has(r.id)) continue;
+        await TrailStore.importSynced({
+          remoteId: r.id,
+          name: r.name,
+          kind: r.kind,
+          points: r.points,
+          distanceMeters: r.distance_meters,
+          startedAt: r.started_at,
+          endedAt: r.ended_at,
+          difficulty: r.difficulty,
+          createdAt: r.created_at,
+        });
+      }
+      for (const r of remoteWaypoints) {
+        if (knownWaypointRemoteIds.has(r.id)) continue;
+        await WaypointStore.importSynced({
+          remoteId: r.id,
+          name: r.name,
+          lat: r.lat,
+          lng: r.lng,
+          note: r.note,
+          category: r.category,
+          createdAt: r.created_at,
+        });
+      }
+
+      if (!panel.classList.contains("hidden") && document.getElementById("trail-rows")) {
+        openTrailsPanel(); // refresh My Content if it's the panel currently open
+      }
+    } catch (err) {
+      console.warn("Personal sync failed (will retry next time):", err.message);
+      throw err;
+    } finally {
+      personalSyncInFlight = null;
+    }
+  })();
+  return personalSyncInFlight;
 }
 
 async function openGroupPanel() {
@@ -2376,11 +2479,28 @@ async function openSettingsPanel() {
   openPanel(
     "Settings",
     `
-    <button class="primary" id="open-folders-btn" style="background:var(--panel);border:1px solid var(--accent-bright);">Trip Folders</button>
+    <div class="region-item">
+      <div><div>Back up My Content</div><small id="sync-status">Your trails and waypoints sync privately to your account — only you can see them.</small></div>
+      <button class="pill-btn" id="sync-now-btn">Sync Now</button>
+    </div>
+    <button class="primary" id="open-folders-btn" style="background:var(--panel);border:1px solid var(--accent-bright);margin-top:12px;">Trip Folders</button>
     <button class="primary" id="sign-out-btn" style="background:var(--panel);border:1px solid var(--border);">Sign Out</button>
     `
   );
   document.getElementById("open-folders-btn").addEventListener("click", openFoldersPanel);
+  document.getElementById("sync-now-btn").addEventListener("click", async (e) => {
+    const status = document.getElementById("sync-status");
+    e.target.disabled = true;
+    status.textContent = "Syncing…";
+    try {
+      await syncPersonalData();
+      status.textContent = "Synced just now — only you can see your backed-up trails and waypoints.";
+    } catch (err) {
+      status.textContent = "Couldn't sync (offline?) — it'll retry automatically next time. " + err.message;
+    } finally {
+      e.target.disabled = false;
+    }
+  });
   document.getElementById("sign-out-btn").addEventListener("click", async () => {
     await GroupBackend.signOut();
     session = null;
@@ -2469,6 +2589,7 @@ function renderAuthPanel(mode = "signin") {
         return;
       }
       activateSocial();
+      syncPersonalData();
       renderChatPanel();
     } catch (err) {
       showError(err);

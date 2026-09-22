@@ -41,6 +41,12 @@ const GroupBackend = (() => {
       sendMessage: disabled,
       subscribeMessages: disabled,
       reportError: disabled,
+      upsertPersonalTrail: disabled,
+      listPersonalTrails: disabled,
+      deletePersonalTrail: disabled,
+      upsertPersonalWaypoint: disabled,
+      listPersonalWaypoints: disabled,
+      deletePersonalWaypoint: disabled,
     };
   }
 
@@ -329,6 +335,74 @@ const GroupBackend = (() => {
     if (error) throw error;
   }
 
+  // ---------- Personal sync (private backup of My Content) ----------
+  // Unlike everything above — which is deliberately shared with every
+  // signed-in user — these mirror a user's own local trails/waypoints
+  // (js/db.js's TrailStore/WaypointStore) so they survive a lost phone or
+  // carry over to a new device. RLS on personal_trails/personal_waypoints
+  // (see sql/schema.sql) restricts every operation, including select, to
+  // auth.uid() = user_id: nobody else can ever read these, unlike the
+  // shared_* tables' "any authenticated user" read policy. The actual
+  // push/pull merge logic lives in js/app.js's syncPersonalData(), which
+  // matches local <-> remote rows by the remoteId this module hands back.
+  async function upsertPersonalTrail(trail) {
+    const uid = await currentUserId();
+    const row = {
+      user_id: uid,
+      name: trail.name,
+      kind: trail.kind,
+      points: trail.points,
+      distance_meters: trail.distanceMeters,
+      started_at: trail.startedAt,
+      ended_at: trail.endedAt,
+      difficulty: trail.difficulty,
+      created_at: trail.createdAt,
+    };
+    if (trail.remoteId) row.id = trail.remoteId; // update in place; omitted on first push so Postgres assigns a fresh uuid
+    const { data, error } = await client.from("personal_trails").upsert(row).select().single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function listPersonalTrails() {
+    const { data, error } = await client.from("personal_trails").select("*");
+    if (error) throw error;
+    return data;
+  }
+
+  async function deletePersonalTrail(remoteId) {
+    const { error } = await client.from("personal_trails").delete().eq("id", remoteId);
+    if (error) throw error;
+  }
+
+  async function upsertPersonalWaypoint(wp) {
+    const uid = await currentUserId();
+    const row = {
+      user_id: uid,
+      name: wp.name,
+      lat: wp.lat,
+      lng: wp.lng,
+      note: wp.note || "",
+      category: wp.category || "other",
+      created_at: wp.createdAt,
+    };
+    if (wp.remoteId) row.id = wp.remoteId;
+    const { data, error } = await client.from("personal_waypoints").upsert(row).select().single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function listPersonalWaypoints() {
+    const { data, error } = await client.from("personal_waypoints").select("*");
+    if (error) throw error;
+    return data;
+  }
+
+  async function deletePersonalWaypoint(remoteId) {
+    const { error } = await client.from("personal_waypoints").delete().eq("id", remoteId);
+    if (error) throw error;
+  }
+
   return {
     enabled: true,
     onAuthChange,
@@ -358,5 +432,11 @@ const GroupBackend = (() => {
     sendMessage,
     subscribeMessages,
     reportError,
+    upsertPersonalTrail,
+    listPersonalTrails,
+    deletePersonalTrail,
+    upsertPersonalWaypoint,
+    listPersonalWaypoints,
+    deletePersonalWaypoint,
   };
 })();
