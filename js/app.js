@@ -67,11 +67,21 @@ const SATELLITE_STYLE = {
       // a softer image beats a dead-end error tile.
       maxzoom: 19,
     },
-    // Esri's free "hybrid" reference layer — transparent PNG tiles with
-    // just place names, road labels, and boundaries, meant to sit on top
-    // of World_Imagery exactly like this. Same server/ToS as the imagery
-    // above, no separate API key. Capped to match the satellite layer so
-    // the two stay visually in sync at extreme zoom.
+    // Esri's free "hybrid" reference layers — transparent PNG tiles meant
+    // to sit on top of World_Imagery exactly like this. Same server/ToS as
+    // the imagery above, no separate API key. Two separate services: place
+    // names/boundaries alone don't include streets — road lines and street
+    // names live in the Transportation layer instead. Both capped to match
+    // the satellite layer so they stay visually in sync at extreme zoom.
+    "esri-transportation": {
+      type: "raster",
+      tiles: [
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}",
+      ],
+      tileSize: 256,
+      attribution: "Esri",
+      maxzoom: 19,
+    },
     "esri-labels": {
       type: "raster",
       tiles: [
@@ -84,6 +94,7 @@ const SATELLITE_STYLE = {
   },
   layers: [
     { id: "esri-satellite-layer", type: "raster", source: "esri-satellite" },
+    { id: "esri-transportation-layer", type: "raster", source: "esri-transportation" },
     { id: "esri-labels-layer", type: "raster", source: "esri-labels" },
   ],
 };
