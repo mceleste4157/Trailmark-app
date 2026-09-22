@@ -53,8 +53,14 @@ const GroupBackend = (() => {
   async function signUp(email, password, displayName) {
     const { data, error } = await client.auth.signUp({ email, password });
     if (error) throw error;
-    if (data.user) {
-      await client.from("profiles").upsert({ id: data.user.id, display_name: displayName });
+    // If the project requires email confirmation, signUp() succeeds but
+    // data.session is null until the user clicks the confirmation link —
+    // there's no authenticated request possible yet, so skip the profile
+    // write rather than let it fail RLS silently (the caller checks
+    // data.session itself to tell the user what's going on).
+    if (data.user && data.session) {
+      const { error: profileError } = await client.from("profiles").upsert({ id: data.user.id, display_name: displayName });
+      if (profileError) throw profileError;
     }
     return data;
   }

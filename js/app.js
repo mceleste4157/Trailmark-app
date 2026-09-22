@@ -1823,6 +1823,15 @@ function renderAuthPanel() {
       const password = document.getElementById("auth-password").value;
       await GroupBackend.signUp(email, password, name);
       session = await GroupBackend.getSession();
+      if (!session) {
+        // The project requires email confirmation — there's no active
+        // session yet, so don't proceed into a Crew panel that looks
+        // signed in but can't actually write anything (every Supabase
+        // call would silently fail row-level security). Tell the user
+        // what's actually going on instead.
+        showError(new Error("Account created — check your email to confirm it, then come back and sign in."));
+        return;
+      }
       activateSocial();
       renderCrewPanel();
     } catch (err) {
