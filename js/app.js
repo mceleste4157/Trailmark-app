@@ -3116,7 +3116,22 @@ async function addRadarLayer() {
   if (map.getSource(RADAR_SOURCE_ID)) {
     map.getSource(RADAR_SOURCE_ID).setTiles([tileUrl]);
   } else {
-    map.addSource(RADAR_SOURCE_ID, { type: "raster", tiles: [tileUrl], tileSize: 256, attribution: "Radar: RainViewer" });
+    map.addSource(RADAR_SOURCE_ID, {
+      type: "raster",
+      tiles: [tileUrl],
+      tileSize: 256,
+      attribution: "Radar: RainViewer",
+      // RainViewer's tile cache doesn't actually generate real imagery
+      // past z7 — confirmed by fetching real tiles at several zooms:
+      // every request past z7 comes back 200 OK, but every single one is
+      // the exact same placeholder PNG with "Zoom Level Not Supported"
+      // baked into the picture rather than an HTTP error, so there's no
+      // way to detect it from the response alone. Capping maxzoom here
+      // makes MapLibre stop requesting past it and over-scale the last
+      // real tile instead — same fix already applied to the Esri
+      // satellite layer for the same kind of placeholder-tile problem.
+      maxzoom: 7,
+    });
     map.addLayer({ id: "radar-layer", type: "raster", source: RADAR_SOURCE_ID, paint: { "raster-opacity": 0.65 } });
   }
 }
