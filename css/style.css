@@ -187,13 +187,16 @@ html, body {
 
 #topbar-right {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   pointer-events: auto;
 }
 
 #btn-basemap,
-#btn-layers {
+#btn-layers,
+#btn-weather {
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 999px;

@@ -3167,11 +3167,14 @@ async function toggleRadar() {
 }
 
 // ---------- Map Layers menu ----------
-// Consolidates the 3D/Weather/Radar/Cell-coverage toggles that used to
-// be their own topbar buttons — at real phone widths that row simply
-// didn't fit (the status pill was running off the edge of the screen).
-// Same tools-grid pattern as the Tools panel, which this exists right
-// next to conceptually.
+// Consolidates the 3D/Radar/Cell-coverage toggles that used to be their
+// own topbar buttons — at real phone widths that row simply didn't fit
+// (the status pill was running off the edge of the screen). Same
+// tools-grid pattern as the Tools panel, which this exists right next to
+// conceptually. Weather has its own topbar button rather than living
+// here — unlike these three, it isn't an on/off map layer, it opens a
+// whole separate panel (forecast, alerts, sunset), so grouping it with
+// toggles was more confusing than it saved.
 async function openLayersPanel() {
   const radarLabel = radarOn && radarFrameTime ? `Radar (${new Date(radarFrameTime).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })})` : "Radar";
   openPanel(
@@ -3191,9 +3194,6 @@ async function openLayersPanel() {
       </button>`
           : ""
       }
-      <button class="tools-grid-btn" id="layers-weather-btn">
-        <span class="tools-grid-icon">🌤️</span><span>Weather</span>
-      </button>
     </div>
     `
   );
@@ -3209,8 +3209,9 @@ async function openLayersPanel() {
     await toggleCellTowers();
     openLayersPanel();
   });
-  document.getElementById("layers-weather-btn").addEventListener("click", openWeatherPanel);
 }
+
+document.getElementById("btn-weather")?.addEventListener("click", openWeatherPanel);
 
 document.getElementById("btn-layers")?.addEventListener("click", openLayersPanel);
 
