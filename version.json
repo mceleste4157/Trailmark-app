@@ -1,6 +1,12 @@
 {
-  "current": "1.20",
+  "current": "1.21",
   "history": [
+    {
+      "version": "1.21",
+      "date": "2026-09-22",
+      "summary": "Add a light/dark theme toggle",
+      "commit": "47954b5"
+    },
     {
       "version": "1.20",
       "date": "2026-09-22",
