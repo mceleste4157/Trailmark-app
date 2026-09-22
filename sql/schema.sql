@@ -144,7 +144,12 @@ create policy "creators can delete their own shared waypoints"
 -- ---------- Shared trails (recorded rides + planned routes, with rating) ----------
 create table if not exists shared_trails (
   id uuid primary key default uuid_generate_v4(),
-  created_by uuid not null references auth.users(id),
+  -- References profiles(id), not auth.users(id) directly — see the note
+  -- on shared_waypoints above. (This table was missed when the others
+  -- were migrated; fixed here so a future "by <rider>" on shared trails,
+  -- same as waypoints/photos already have, doesn't quietly fail RLS/
+  -- PostgREST embedding the way theirs did.)
+  created_by uuid not null references profiles(id),
   name text not null,
   kind text not null default 'recorded', -- 'recorded' | 'planned'
   rating text, -- 'favorite' | 'bad' | null
@@ -305,6 +310,10 @@ begin
   if exists (select 1 from pg_constraint where conname = 'shared_waypoints_created_by_fkey' and confrelid = 'auth.users'::regclass) then
     alter table shared_waypoints drop constraint shared_waypoints_created_by_fkey;
     alter table shared_waypoints add constraint shared_waypoints_created_by_fkey foreign key (created_by) references profiles(id);
+  end if;
+  if exists (select 1 from pg_constraint where conname = 'shared_trails_created_by_fkey' and confrelid = 'auth.users'::regclass) then
+    alter table shared_trails drop constraint shared_trails_created_by_fkey;
+    alter table shared_trails add constraint shared_trails_created_by_fkey foreign key (created_by) references profiles(id);
   end if;
 end $$;
 
