@@ -152,52 +152,28 @@ geolocateControl.on("geolocate", hideLocateBanner);
 // Piggybacks on the GeolocateControl's own continuous, high-accuracy
 // position stream (it keeps watching after the first trigger() since
 // trackUserLocation is on) instead of opening a second GPS watch.
-const speedCircle = document.getElementById("speed-circle");
+const statsHud = document.getElementById("stats-hud");
 const statSpeedEl = document.getElementById("stat-speed");
-const statsCard = document.getElementById("stats-card");
+const statHeadingEl = document.getElementById("stat-heading");
+const statHeadingArrowEl = document.getElementById("stat-heading-arrow");
 const statElevationEl = document.getElementById("stat-elevation");
 
 const COMPASS_POINTS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
-
-// ---------- Compass ribbon ----------
-// A horizontally-scrolling tape (like onX's) rather than a single
-// rotating arrow: the track holds 3 loops of tick marks/labels so there's
-// always content under the fixed center indicator regardless of heading,
-// and gets translated so the current heading lines up with it.
-const COMPASS_PX_PER_DEG = 4;
-const compassRibbon = document.getElementById("compass-ribbon");
-const compassTrack = document.getElementById("compass-track");
-
-function buildCompassTrack() {
-  let html = "";
-  for (let d = -360; d <= 720; d += 22.5) {
-    const norm = ((Math.round(d) % 360) + 360) % 360;
-    const isCardinal = norm % 45 === 0;
-    const label = isCardinal ? COMPASS_POINTS[Math.round(norm / 22.5) % 16] : "";
-    const left = (d + 360) * COMPASS_PX_PER_DEG;
-    html += `<div class="compass-tick${isCardinal ? " major" : ""}" style="left:${left}px;">${
-      isCardinal ? `<span class="compass-tick-label">${label}</span>` : ""
-    }<span class="compass-tick-mark"></span></div>`;
-  }
-  compassTrack.innerHTML = html;
-}
-buildCompassTrack();
-
-function updateCompassRibbon(heading) {
-  const width = compassRibbon.clientWidth;
-  const offset = width / 2 - (heading + 360) * COMPASS_PX_PER_DEG;
-  compassTrack.style.transform = `translateX(${offset}px)`;
+function compassLabel(deg) {
+  return COMPASS_POINTS[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
 }
 
 // North-up (default) vs. track-up (map rotates so your current heading
 // always points to the top of the screen, like onX/most nav apps).
+const btnOrientation = document.getElementById("btn-orientation");
 const statOrientationModeEl = document.getElementById("stat-orientation-mode");
 let orientationMode = "north"; // "north" | "track"
 
-compassRibbon.addEventListener("click", () => {
+btnOrientation.addEventListener("click", () => {
   orientationMode = orientationMode === "north" ? "track" : "north";
+  btnOrientation.classList.toggle("active", orientationMode === "track");
   statOrientationModeEl.textContent = orientationMode === "track" ? "TRK-UP" : "N-UP";
-  compassRibbon.title =
+  btnOrientation.title =
     orientationMode === "track"
       ? "Track-up: map rotates to your direction of travel. Tap for North-up."
       : "North-up. Tap for track-up (rotates map to your direction of travel).";
@@ -205,25 +181,26 @@ compassRibbon.addEventListener("click", () => {
 });
 
 function updateStatsHud(position) {
-  speedCircle.classList.remove("hidden");
-  compassRibbon.classList.remove("hidden");
-  statsCard.classList.remove("hidden");
+  statsHud.classList.remove("hidden");
   const { speed, heading, altitude } = position.coords;
 
   statSpeedEl.textContent = typeof speed === "number" && isFinite(speed) && speed >= 0 ? Math.round(speed * 2.23694) : "--";
 
   if (typeof heading === "number" && isFinite(heading)) {
-    compassRibbon.classList.remove("dim");
-    updateCompassRibbon(heading);
+    statHeadingEl.textContent = compassLabel(heading);
+    statHeadingArrowEl.classList.remove("dim");
     if (orientationMode === "track") {
-      // The map itself now rotates to match your heading, so the ribbon's
-      // own centered indicator already means "the way you're going" —
-      // just keep it centered on 0 rather than duplicating the rotation.
-      updateCompassRibbon(0);
+      // The map itself now rotates to match your heading, so "up" on
+      // screen already means "the way you're going" — the arrow just
+      // points straight up rather than duplicating that rotation.
+      statHeadingArrowEl.style.transform = "rotate(0deg)";
       map.easeTo({ bearing: heading, duration: 300 });
+    } else {
+      statHeadingArrowEl.style.transform = `rotate(${heading}deg)`;
     }
   } else {
-    compassRibbon.classList.add("dim");
+    statHeadingEl.textContent = "--";
+    statHeadingArrowEl.classList.add("dim");
   }
 
   // Device-reported GPS altitude only — the free AWS terrain tiles used
@@ -1176,10 +1153,8 @@ function openWaypointPanel() {
 
 // ---------- Recording ----------
 const recordingHud = document.getElementById("recording-hud");
-// Time/Distance live in the stats card now (shared with the always-on
-// Elevation/Tilt stats) rather than a separate display of their own.
-const recordingTime = document.getElementById("stat-time");
-const recordingDist = document.getElementById("stat-distance");
+const recordingTime = document.getElementById("recording-time");
+const recordingDist = document.getElementById("recording-dist");
 let recordingTimer = null;
 let recordingStartedAt = null;
 let liveTrailSourceId = null;
@@ -1251,8 +1226,8 @@ document.getElementById("btn-stop-recording").addEventListener("click", async ()
   const result = GpsRecorder.stop();
   clearInterval(recordingTimer);
   recordingHud.classList.add("hidden");
-  recordingTime.textContent = "--";
-  recordingDist.textContent = "--";
+  recordingTime.textContent = "00:00";
+  recordingDist.textContent = "0.00 mi";
 
   if (result.points.length < 2) {
     alert("Trail too short to save (need at least 2 GPS points).");
