@@ -1,6 +1,12 @@
 {
-  "current": "1.27",
+  "current": "1.28",
   "history": [
+    {
+      "version": "1.28",
+      "date": "2026-09-22",
+      "summary": "Show street names on the satellite basemap",
+      "commit": "dfa6b73"
+    },
     {
       "version": "1.27",
       "date": "2026-09-22",
