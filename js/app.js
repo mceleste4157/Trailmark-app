@@ -1542,6 +1542,216 @@ function difficultyLabel(d) {
   return d ? `Difficulty ${d}/10` : "Unrated";
 }
 
+// ---------- Elevation profile ----------
+// Device GPS altitude support is spotty (see the comment in updateStatsHud),
+// so a trail may have no elevation, partial elevation, or a full track of
+// it. Distance is measured along the *entire* path (not just the points
+// with elevation) so gaps don't skew the x-axis relative to the trail's
+// real length.
+function elevHaversineMeters(a, b) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const s =
+    Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+function metersToFeet(m) {
+  return m * 3.28084;
+}
+
+function trailHasElevation(t) {
+  const pts = t.points || [];
+  let count = 0;
+  for (const p of pts) {
+    if (typeof p.ele === "number" && isFinite(p.ele)) {
+      count++;
+      if (count >= 2) return true;
+    }
+  }
+  return false;
+}
+
+// Returns { series: [{distMi, eleFt}], gainFt, lossFt, minFt, maxFt } or
+// null if the trail doesn't have enough elevation samples to plot.
+function buildElevationProfile(trail) {
+  const points = trail.points || [];
+  let cumMeters = 0;
+  const series = [];
+  for (let i = 0; i < points.length; i++) {
+    if (i > 0) cumMeters += elevHaversineMeters(points[i - 1], points[i]);
+    const ele = points[i].ele;
+    if (typeof ele === "number" && isFinite(ele)) {
+      series.push({ distMi: metersToMiles(cumMeters), eleFt: metersToFeet(ele) });
+    }
+  }
+  if (series.length < 2) return null;
+
+  let gainFt = 0;
+  let lossFt = 0;
+  let minFt = series[0].eleFt;
+  let maxFt = series[0].eleFt;
+  for (let i = 0; i < series.length; i++) {
+    const eleFt = series[i].eleFt;
+    if (eleFt < minFt) minFt = eleFt;
+    if (eleFt > maxFt) maxFt = eleFt;
+    if (i > 0) {
+      const delta = eleFt - series[i - 1].eleFt;
+      if (delta > 0) gainFt += delta;
+      else lossFt += -delta;
+    }
+  }
+  return { series, gainFt, lossFt, minFt, maxFt };
+}
+
+const ELEV_CHART_W = 600;
+const ELEV_CHART_H = 220;
+const ELEV_CHART_PAD = { l: 40, r: 12, t: 14, b: 26 };
+
+function elevChartScales(profile) {
+  const { series, minFt, maxFt } = profile;
+  const plotW = ELEV_CHART_W - ELEV_CHART_PAD.l - ELEV_CHART_PAD.r;
+  const plotH = ELEV_CHART_H - ELEV_CHART_PAD.t - ELEV_CHART_PAD.b;
+  const distMax = series[series.length - 1].distMi || 1;
+  const rangeFt = Math.max(maxFt - minFt, 10);
+  const yMin = minFt - rangeFt * 0.08;
+  const yMax = maxFt + rangeFt * 0.08;
+  const x = (distMi) => ELEV_CHART_PAD.l + (distMi / distMax) * plotW;
+  const y = (eleFt) => ELEV_CHART_PAD.t + plotH - ((eleFt - yMin) / (yMax - yMin)) * plotH;
+  return { plotW, plotH, distMax, yMin, yMax, x, y };
+}
+
+function elevationProfileSvgHtml(profile) {
+  const { series } = profile;
+  const { plotW, plotH, distMax, yMin, yMax, x, y } = elevChartScales(profile);
+
+  const linePath = series
+    .map((p, i) => `${i === 0 ? "M" : "L"}${x(p.distMi).toFixed(1)},${y(p.eleFt).toFixed(1)}`)
+    .join(" ");
+  const baseY = (ELEV_CHART_PAD.t + plotH).toFixed(1);
+  const areaPath = `${linePath} L${x(series[series.length - 1].distMi).toFixed(1)},${baseY} L${x(0).toFixed(1)},${baseY} Z`;
+
+  const gridCount = 4;
+  let gridLines = "";
+  for (let i = 0; i <= gridCount; i++) {
+    const eleFt = yMin + ((yMax - yMin) * i) / gridCount;
+    const gy = y(eleFt);
+    gridLines += `<line x1="${ELEV_CHART_PAD.l}" y1="${gy.toFixed(1)}" x2="${ELEV_CHART_W - ELEV_CHART_PAD.r}" y2="${gy.toFixed(1)}" stroke="var(--border)" stroke-width="1" />`;
+    gridLines += `<text x="${ELEV_CHART_PAD.l - 6}" y="${(gy + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--text-dim)">${Math.round(eleFt)}</text>`;
+  }
+  const distTicks = [0, distMax / 2, distMax];
+  const distLabels = distTicks
+    .map((d, i) => {
+      const anchor = i === 0 ? "start" : i === distTicks.length - 1 ? "end" : "middle";
+      return `<text x="${x(d).toFixed(1)}" y="${ELEV_CHART_H - 8}" text-anchor="${anchor}" font-size="10" fill="var(--text-dim)">${d.toFixed(1)} mi</text>`;
+    })
+    .join("");
+
+  return `
+    <div class="elev-chart-wrap">
+      <svg id="elev-svg" viewBox="0 0 ${ELEV_CHART_W} ${ELEV_CHART_H}" style="width:100%;height:180px;display:block;touch-action:none;">
+        ${gridLines}
+        <path d="${areaPath}" fill="var(--accent-bright)" opacity="0.16" stroke="none" />
+        <path d="${linePath}" fill="none" stroke="var(--accent-bright)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+        ${distLabels}
+        <g id="elev-crosshair" style="display:none;">
+          <line id="elev-crosshair-line" x1="0" y1="${ELEV_CHART_PAD.t}" x2="0" y2="${ELEV_CHART_PAD.t + plotH}" stroke="var(--text-dim)" stroke-width="1" stroke-dasharray="3,3" />
+          <circle id="elev-crosshair-dot" r="4" fill="var(--accent-bright)" stroke="var(--panel)" stroke-width="2" />
+        </g>
+        <rect id="elev-hit-area" x="${ELEV_CHART_PAD.l}" y="${ELEV_CHART_PAD.t}" width="${plotW}" height="${plotH}" fill="transparent" />
+      </svg>
+      <div id="elev-tooltip" style="display:none;"></div>
+    </div>
+  `;
+}
+
+function wireElevationProfileInteraction(profile) {
+  const svg = document.getElementById("elev-svg");
+  const hitArea = document.getElementById("elev-hit-area");
+  const crosshair = document.getElementById("elev-crosshair");
+  const crosshairLine = document.getElementById("elev-crosshair-line");
+  const dot = document.getElementById("elev-crosshair-dot");
+  const tooltip = document.getElementById("elev-tooltip");
+  if (!svg || !hitArea) return;
+
+  const { series } = profile;
+  const { distMax, x: xScale, y: yScale } = elevChartScales(profile);
+
+  function nearestIndex(distMi) {
+    let lo = 0,
+      hi = series.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (series[mid].distMi < distMi) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0 && Math.abs(series[lo - 1].distMi - distMi) < Math.abs(series[lo].distMi - distMi)) return lo - 1;
+    return lo;
+  }
+
+  function showAt(clientX) {
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width) return;
+    const svgX = ((clientX - rect.left) / rect.width) * ELEV_CHART_W;
+    const distMi = Math.max(0, Math.min(distMax, ((svgX - ELEV_CHART_PAD.l) / (ELEV_CHART_W - ELEV_CHART_PAD.l - ELEV_CHART_PAD.r)) * distMax));
+    const idx = nearestIndex(distMi);
+    const p = series[idx];
+    const cx = xScale(p.distMi);
+    const cy = yScale(p.eleFt);
+    crosshairLine.setAttribute("x1", cx);
+    crosshairLine.setAttribute("x2", cx);
+    dot.setAttribute("cx", cx);
+    dot.setAttribute("cy", cy);
+    crosshair.style.display = "block";
+
+    // Local grade over a small window of samples around this point.
+    const back = series[Math.max(0, idx - 2)];
+    const fwd = series[Math.min(series.length - 1, idx + 2)];
+    const runMi = fwd.distMi - back.distMi;
+    const riseFt = fwd.eleFt - back.eleFt;
+    const gradePct = runMi > 0.01 ? (riseFt / (runMi * 5280)) * 100 : 0;
+
+    tooltip.textContent = `${p.distMi.toFixed(2)} mi · ${Math.round(p.eleFt).toLocaleString()} ft · grade ${gradePct >= 0 ? "+" : ""}${gradePct.toFixed(0)}%`;
+    tooltip.style.display = "block";
+  }
+
+  function hide() {
+    crosshair.style.display = "none";
+    tooltip.style.display = "none";
+  }
+
+  hitArea.addEventListener("pointermove", (e) => showAt(e.clientX));
+  hitArea.addEventListener("pointerdown", (e) => showAt(e.clientX));
+  hitArea.addEventListener("pointerleave", hide);
+}
+
+function openElevationProfilePanel(trail) {
+  const profile = buildElevationProfile(trail);
+  if (!profile) {
+    openPanel(
+      `${trail.name} — Elevation`,
+      `<p>No elevation data on this trail. GPS altitude support varies a lot by device/browser, so some rides won't have it — especially planned routes, which aren't GPS-tracked at all.</p>`
+    );
+    return;
+  }
+  const { gainFt, lossFt, minFt, maxFt } = profile;
+  openPanel(
+    `${trail.name} — Elevation`,
+    `
+    <div class="elev-stats">
+      <div class="elev-stat"><div class="elev-stat-value">${Math.round(gainFt).toLocaleString()}</div><div class="elev-stat-label">Gain (ft)</div></div>
+      <div class="elev-stat"><div class="elev-stat-value">${Math.round(lossFt).toLocaleString()}</div><div class="elev-stat-label">Loss (ft)</div></div>
+      <div class="elev-stat"><div class="elev-stat-value">${Math.round(maxFt).toLocaleString()}</div><div class="elev-stat-label">Max (ft)</div></div>
+      <div class="elev-stat"><div class="elev-stat-value">${Math.round(minFt).toLocaleString()}</div><div class="elev-stat-label">Min (ft)</div></div>
+    </div>
+    ${elevationProfileSvgHtml(profile)}
+    `
+  );
+  wireElevationProfileInteraction(profile);
+}
+
 async function openTrailsPanel() {
   const trails = await TrailStore.listTrails();
   const waypoints = await WaypointStore.listWaypoints();
@@ -1570,6 +1780,7 @@ async function openTrailsPanel() {
         </div>
         <div>
           <button class="pill-btn" data-action="show">Show</button>
+          ${trailHasElevation(t) ? '<button class="pill-btn" data-action="profile">Profile</button>' : ""}
           <button class="pill-btn" data-action="rename">Rename</button>
           <button class="pill-btn" data-action="rate">Rate</button>
           <button class="pill-btn" data-action="export">GPX</button>
@@ -1669,6 +1880,9 @@ async function openTrailsPanel() {
       } else if (action === "export") {
         const trail = await TrailStore.getTrail(id);
         downloadFile(`${trail.name.replace(/[^a-z0-9]+/gi, "-")}.gpx`, trailToGpx(trail), "application/gpx+xml");
+      } else if (action === "profile") {
+        const trail = await TrailStore.getTrail(id);
+        openElevationProfilePanel(trail);
       } else if (action === "share") {
         const trail = await TrailStore.getTrail(id);
         try {

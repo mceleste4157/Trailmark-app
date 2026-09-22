@@ -63,7 +63,7 @@ list, no CI build step, no `.pmtiles` archive to manage.
 - [x] Draw/record trails (GPS track recording via `watchPosition`)
 - [x] Waypoint markers with notes/photos
 - [x] Offline region download UI (pan/zoom to any area, download that view)
-- [ ] Elevation profile for recorded trails
+- [x] Elevation profile for recorded trails
 - [x] Supabase sync for multi-device / sharing
 - [x] Export trail as GPX
 
