@@ -1,6 +1,12 @@
 {
-  "current": "1.14",
+  "current": "1.15",
   "history": [
+    {
+      "version": "1.15",
+      "date": "2026-09-22",
+      "summary": "Don't silently fake a signed-in state when email confirmation is pending",
+      "commit": "2ea2481"
+    },
     {
       "version": "1.14",
       "date": "2026-09-21",
