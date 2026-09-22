@@ -228,7 +228,7 @@ function updateStatsHud(position) {
   }
 
   // Device-reported GPS altitude only — the free AWS terrain tiles used
-  // for the hillshade overlay have no CORS headers, so their elevation
+  // for the 3D terrain view have no CORS headers, so their elevation
   // data can be drawn on the map but not read back as a number in JS.
   // Altitude support varies a lot by device/browser, hence the "--".
   statElevationEl.textContent = typeof altitude === "number" && isFinite(altitude) ? Math.round(altitude * 3.28084) : "--";
@@ -335,7 +335,6 @@ document.getElementById("btn-basemap")?.addEventListener("click", () => {
 // first, initial one) — re-add anything that isn't part of the base
 // style, since setStyle wipes all custom sources/layers.
 map.on("style.load", () => {
-  if (hillshadeOn) addHillshadeLayer();
   if (terrain3dOn) add3dTerrainLayers(); // setTerrain/sky are wiped by setStyle same as any other layer — pitch itself isn't, so no need to re-ease it here
   if (cellTowersOn) refreshCellTowerLayer().catch((err) => console.warn("Cell tower re-layer failed:", err));
   drawBreadcrumbLine();
@@ -526,75 +525,24 @@ async function clearBreadcrumbTrail() {
   activeBreadcrumbSourceIds.clear();
 }
 
-// ---------- Terrain hillshade (elevation relief) ----------
-// AWS Terrain Tiles (free, public, no API key — a standard, widely-used
-// source for exactly this) as a hillshade overlay, useful for spotting
-// steep/technical terrain when planning a route. Online-only, like the
-// satellite imagery — not cached for offline use.
-let hillshadeOn = false;
-const TERRAIN_SOURCE_ID = "aws-terrain-dem";
-
-// Shared by the flat hillshade overlay below and the 3D terrain toggle
-// further down — both need the exact same raster-dem source, so whichever
-// turns on first adds it and whichever turns off last removes it.
-function ensureTerrainDemSource() {
-  if (map.getSource(TERRAIN_SOURCE_ID)) return;
-  map.addSource(TERRAIN_SOURCE_ID, {
-    type: "raster-dem",
-    tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
-    tileSize: 256,
-    encoding: "terrarium",
-    attribution: "Terrain: AWS Terrain Tiles",
-  });
-}
-
-function removeTerrainDemSourceIfUnused() {
-  if (!hillshadeOn && !terrain3dOn && map.getSource(TERRAIN_SOURCE_ID)) {
-    map.removeSource(TERRAIN_SOURCE_ID);
-  }
-}
-
-function addHillshadeLayer() {
-  ensureTerrainDemSource();
-  if (map.getLayer("hillshade-layer")) return;
-  map.addLayer({
-    id: "hillshade-layer",
-    type: "hillshade",
-    source: TERRAIN_SOURCE_ID,
-    paint: { "hillshade-exaggeration": 0.6 },
-  });
-}
-
-function removeHillshadeLayer() {
-  if (map.getLayer("hillshade-layer")) map.removeLayer("hillshade-layer");
-  removeTerrainDemSourceIfUnused();
-}
-
-function toggleHillshade() {
-  if (!navigator.onLine && !hillshadeOn) {
-    alert("Terrain shading needs an internet connection — it isn't downloaded for offline use.");
-    return;
-  }
-  hillshadeOn = !hillshadeOn;
-  if (hillshadeOn) addHillshadeLayer();
-  else removeHillshadeLayer();
-  const btn = document.getElementById("btn-terrain");
-  if (btn) btn.classList.toggle("active-pill", hillshadeOn);
-}
-
-document.getElementById("btn-terrain")?.addEventListener("click", toggleHillshade);
-
 // ---------- 3D terrain (pitched, elevation-extruded view) ----------
-// Reuses the same DEM source as the flat hillshade above — MapLibre's
-// setTerrain() just needs a raster-dem source, which is exactly what
-// that already is. Independent toggle from hillshade: relief shading and
-// 3D extrusion address different things (a flat-but-shaded map vs. an
-// actually-tilted one) and you can run either, both, or neither.
+// AWS Terrain Tiles (free, public, no API key — a standard, widely-used
+// source for exactly this) as the DEM MapLibre's setTerrain() extrudes.
+// Online-only, like the satellite imagery — not cached for offline use.
 let terrain3dOn = false;
+const TERRAIN_SOURCE_ID = "aws-terrain-dem";
 const TERRAIN_3D_PITCH = 60; // MapLibre's default maxPitch — as steep as it goes without raising that
 
 function add3dTerrainLayers() {
-  ensureTerrainDemSource();
+  if (!map.getSource(TERRAIN_SOURCE_ID)) {
+    map.addSource(TERRAIN_SOURCE_ID, {
+      type: "raster-dem",
+      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+      tileSize: 256,
+      encoding: "terrarium",
+      attribution: "Terrain: AWS Terrain Tiles",
+    });
+  }
   map.setTerrain({ source: TERRAIN_SOURCE_ID, exaggeration: 1.3 });
   if (!map.getLayer("sky")) {
     map.addLayer({ id: "sky", type: "sky", paint: { "sky-type": "atmosphere", "sky-atmosphere-sun-intensity": 10 } });
@@ -604,7 +552,7 @@ function add3dTerrainLayers() {
 function remove3dTerrainLayers() {
   map.setTerrain(null);
   if (map.getLayer("sky")) map.removeLayer("sky");
-  removeTerrainDemSourceIfUnused();
+  if (map.getSource(TERRAIN_SOURCE_ID)) map.removeSource(TERRAIN_SOURCE_ID);
 }
 
 function toggle3dTerrain() {
