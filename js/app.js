@@ -2027,14 +2027,19 @@ function refreshMemberMarkers(rows) {
 function startLocationBroadcast() {
   if (!("geolocation" in navigator) || locationBroadcastWatchId !== null) return;
   let lastSent = 0;
+  let errorShown = false; // surface the first failure once, not on every 15s retry
   locationBroadcastWatchId = navigator.geolocation.watchPosition(
     (pos) => {
       const now = Date.now();
       if (now - lastSent < 15000) return; // throttle: at most every 15s
       lastSent = now;
-      GroupBackend.updateMyLocation(pos.coords.latitude, pos.coords.longitude).catch((err) =>
-        console.warn("Location broadcast failed:", err)
-      );
+      GroupBackend.updateMyLocation(pos.coords.latitude, pos.coords.longitude).catch((err) => {
+        console.warn("Location broadcast failed:", err);
+        if (!errorShown) {
+          errorShown = true;
+          alert("Couldn't share your location with the crew: " + err.message);
+        }
+      });
     },
     (err) => console.warn("Location broadcast GPS error:", err.message),
     { enableHighAccuracy: false, maximumAge: 10000 }
