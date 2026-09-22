@@ -1351,14 +1351,14 @@ document.getElementById("btn-planning-finish").addEventListener("click", async (
 // rather than reading whatever the map currently has loaded. No hardcoded
 // tile host — reads whatever URL that style.json actually specifies, so
 // it adapts automatically if the provider ever changes it.
-let cachedVectorTileTemplate = null;
+let cachedStyleDoc = null;
 // Throws a specific, distinguishable reason instead of a generic "offline"
 // message — a weak-signal fetch failure, an HTTP error from the basemap
 // server, and a style that genuinely has no vector source are three very
 // different problems, and lumping them into one message makes a real bug
 // indistinguishable from "you just need signal."
-async function getOnlineVectorTileTemplate() {
-  if (cachedVectorTileTemplate) return cachedVectorTileTemplate;
+async function getOnlineStyleDoc() {
+  if (cachedStyleDoc) return cachedStyleDoc;
   let res;
   try {
     res = await fetch(ONLINE_STYLE_URL, { cache: "no-store" });
@@ -1368,17 +1368,20 @@ async function getOnlineVectorTileTemplate() {
   if (!res.ok) {
     throw new Error(`Basemap server returned an error (HTTP ${res.status}). Try again in a moment.`);
   }
-  let style;
   try {
-    style = await res.json();
+    cachedStyleDoc = await res.json();
   } catch (err) {
     throw new Error("Basemap server returned an unexpected response. Try again in a moment.");
   }
+  return cachedStyleDoc;
+}
+
+async function getOnlineVectorTileTemplate() {
+  const style = await getOnlineStyleDoc();
   for (const source of Object.values(style.sources || {})) {
     if (source.type !== "vector") continue;
     if (source.tiles && source.tiles.length) {
-      cachedVectorTileTemplate = source.tiles[0];
-      return cachedVectorTileTemplate;
+      return source.tiles[0];
     }
     if (source.url) {
       // Vector sources are commonly declared as a TileJSON reference (a
@@ -1391,8 +1394,7 @@ async function getOnlineVectorTileTemplate() {
         if (tileJsonRes.ok) {
           const tileJson = await tileJsonRes.json();
           if (tileJson.tiles && tileJson.tiles.length) {
-            cachedVectorTileTemplate = tileJson.tiles[0];
-            return cachedVectorTileTemplate;
+            return tileJson.tiles[0];
           }
         }
       } catch (err) {
@@ -1401,6 +1403,57 @@ async function getOnlineVectorTileTemplate() {
     }
   }
   throw new Error("The basemap style loaded but has no trail/road data source — this looks like a provider-side issue, not a connectivity one.");
+}
+
+// Sprite (POI/marker icons) and a base Latin glyph range (place-name
+// labels) for the style — without these, tiles downloaded for offline use
+// still render the trail/road geometry (that's the part that actually
+// matters), but every label and icon quietly disappears the moment you
+// lose signal, because MapLibre fetches them lazily on first use and
+// nothing else in this app forces that "first use" to happen while
+// online. Best-effort and non-fatal: a missing sprite/glyph shouldn't
+// fail the whole area download over something that only affects polish.
+async function cacheStyleChromeAssets(tileCache) {
+  const style = await getOnlineStyleDoc();
+  const puts = [];
+
+  async function cacheUrl(url) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) await tileCache.put(url, response);
+    } catch (err) {
+      console.warn("Style asset fetch failed (skipping):", url, err.message);
+    }
+  }
+
+  if (typeof style.sprite === "string") {
+    for (const suffix of ["", "@2x"]) {
+      puts.push(cacheUrl(`${style.sprite}${suffix}.json`));
+      puts.push(cacheUrl(`${style.sprite}${suffix}.png`));
+    }
+  }
+
+  if (typeof style.glyphs === "string") {
+    // Every distinct font stack any layer actually uses, e.g. "Noto Sans
+    // Regular" or "Noto Sans Italic" — MapLibre requests these joined by
+    // comma. Just the 0-255 range (basic Latin + Latin-1 Supplement):
+    // covers ordinary English place names/road labels, which is the vast
+    // majority of what a US-southeast trail map needs; full coverage
+    // would mean every 256-codepoint range for every font, hundreds of
+    // requests for a benefit this app doesn't need.
+    const fontStacks = new Set();
+    for (const layer of style.layers || []) {
+      const font = layer.layout && layer.layout["text-font"];
+      if (Array.isArray(font) && font.length) fontStacks.add(font.join(","));
+    }
+    if (fontStacks.size === 0) fontStacks.add("Noto Sans Regular"); // sane fallback if no layer specifies one explicitly
+    for (const stack of fontStacks) {
+      const url = style.glyphs.replace("{fontstack}", encodeURIComponent(stack)).replace("{range}", "0-255");
+      puts.push(cacheUrl(url));
+    }
+  }
+
+  await Promise.all(puts);
 }
 
 function lonLatToTileXY(lon, lat, z) {
@@ -1456,7 +1509,7 @@ async function downloadCustomArea(name, bounds, minZoom, maxZoom, onProgress) {
       if (onProgress) onProgress(done / tiles.length);
     }
   }
-  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+  await Promise.all([...Array.from({ length: CONCURRENCY }, worker), cacheStyleChromeAssets(tileCache)]);
   await CustomAreaStore.save({ name, bounds: bounds.toArray(), minZoom, maxZoom, tileCount: tiles.length });
   return tiles.length;
 }
