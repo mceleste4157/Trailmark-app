@@ -1,6 +1,12 @@
 {
-  "current": "1.28",
+  "current": "1.29",
   "history": [
+    {
+      "version": "1.29",
+      "date": "2026-09-22",
+      "summary": "Confirm before deleting a saved trail",
+      "commit": "e7b7a11"
+    },
     {
       "version": "1.28",
       "date": "2026-09-22",
