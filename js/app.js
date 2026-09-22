@@ -3025,14 +3025,21 @@ function formatCountdown(target) {
 }
 
 async function openWeatherPanel() {
-  const center = map.getCenter();
+  // Your actual GPS fix when it's fresh (same 5-minute staleness window
+  // requestPhotoLocation already uses elsewhere) — that's what "weather
+  // right now" should mean for almost everyone. Falls back to the map's
+  // current center (still handy for previewing conditions somewhere
+  // you're planning to go but haven't driven to) when location is off,
+  // denied, or just stale.
+  const usingGps = lastKnownPosition && Date.now() - lastKnownPosition.t < 5 * 60 * 1000;
+  const center = usingGps ? lastKnownPosition : map.getCenter();
   const now = new Date();
   const sunset = calcSunEvent(center.lat, center.lng, now, 90.833);
   const darkTime = calcSunEvent(center.lat, center.lng, now, 96);
 
   openPanel(
     "Weather",
-    `<p style="color:var(--text-dim);font-size:13px;">Loading conditions for the map's current view…</p>`
+    `<p style="color:var(--text-dim);font-size:13px;">Loading conditions for ${usingGps ? "your location" : "the map's current view"}…</p>`
   );
 
   const sunHtml = `
@@ -3075,7 +3082,9 @@ async function openWeatherPanel() {
     openPanel(
       "Weather" + (w.city ? ` — ${escHtml(w.city)}, ${escHtml(w.state || "")}` : ""),
       `${alertsHtml}${sunHtml}${forecastHtml}
-      <p style="color:var(--text-dim);font-size:11px;margin-top:8px;">National Weather Service · based on the map's current view, not your GPS location</p>`
+      <p style="color:var(--text-dim);font-size:11px;margin-top:8px;">National Weather Service · ${
+        usingGps ? "your current location" : "the map's current view (no recent GPS fix — pan the map to check elsewhere)"
+      }</p>`
     );
   } catch (err) {
     openPanel(
