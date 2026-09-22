@@ -174,7 +174,8 @@ html, body {
 }
 
 #btn-basemap,
-#btn-terrain {
+#btn-terrain,
+#btn-3d {
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -185,6 +186,7 @@ html, body {
 }
 
 #btn-terrain.active-pill,
+#btn-3d.active-pill,
 #btn-cell.active-pill {
   border-color: var(--accent-bright);
   color: var(--accent-bright);

@@ -336,6 +336,7 @@ document.getElementById("btn-basemap")?.addEventListener("click", () => {
 // style, since setStyle wipes all custom sources/layers.
 map.on("style.load", () => {
   if (hillshadeOn) addHillshadeLayer();
+  if (terrain3dOn) add3dTerrainLayers(); // setTerrain/sky are wiped by setStyle same as any other layer — pitch itself isn't, so no need to re-ease it here
   if (cellTowersOn) refreshCellTowerLayer().catch((err) => console.warn("Cell tower re-layer failed:", err));
   drawBreadcrumbLine();
 });
@@ -533,7 +534,10 @@ async function clearBreadcrumbTrail() {
 let hillshadeOn = false;
 const TERRAIN_SOURCE_ID = "aws-terrain-dem";
 
-function addHillshadeLayer() {
+// Shared by the flat hillshade overlay below and the 3D terrain toggle
+// further down — both need the exact same raster-dem source, so whichever
+// turns on first adds it and whichever turns off last removes it.
+function ensureTerrainDemSource() {
   if (map.getSource(TERRAIN_SOURCE_ID)) return;
   map.addSource(TERRAIN_SOURCE_ID, {
     type: "raster-dem",
@@ -542,6 +546,17 @@ function addHillshadeLayer() {
     encoding: "terrarium",
     attribution: "Terrain: AWS Terrain Tiles",
   });
+}
+
+function removeTerrainDemSourceIfUnused() {
+  if (!hillshadeOn && !terrain3dOn && map.getSource(TERRAIN_SOURCE_ID)) {
+    map.removeSource(TERRAIN_SOURCE_ID);
+  }
+}
+
+function addHillshadeLayer() {
+  ensureTerrainDemSource();
+  if (map.getLayer("hillshade-layer")) return;
   map.addLayer({
     id: "hillshade-layer",
     type: "hillshade",
@@ -552,7 +567,7 @@ function addHillshadeLayer() {
 
 function removeHillshadeLayer() {
   if (map.getLayer("hillshade-layer")) map.removeLayer("hillshade-layer");
-  if (map.getSource(TERRAIN_SOURCE_ID)) map.removeSource(TERRAIN_SOURCE_ID);
+  removeTerrainDemSourceIfUnused();
 }
 
 function toggleHillshade() {
@@ -568,6 +583,48 @@ function toggleHillshade() {
 }
 
 document.getElementById("btn-terrain")?.addEventListener("click", toggleHillshade);
+
+// ---------- 3D terrain (pitched, elevation-extruded view) ----------
+// Reuses the same DEM source as the flat hillshade above — MapLibre's
+// setTerrain() just needs a raster-dem source, which is exactly what
+// that already is. Independent toggle from hillshade: relief shading and
+// 3D extrusion address different things (a flat-but-shaded map vs. an
+// actually-tilted one) and you can run either, both, or neither.
+let terrain3dOn = false;
+const TERRAIN_3D_PITCH = 60; // MapLibre's default maxPitch — as steep as it goes without raising that
+
+function add3dTerrainLayers() {
+  ensureTerrainDemSource();
+  map.setTerrain({ source: TERRAIN_SOURCE_ID, exaggeration: 1.3 });
+  if (!map.getLayer("sky")) {
+    map.addLayer({ id: "sky", type: "sky", paint: { "sky-type": "atmosphere", "sky-atmosphere-sun-intensity": 10 } });
+  }
+}
+
+function remove3dTerrainLayers() {
+  map.setTerrain(null);
+  if (map.getLayer("sky")) map.removeLayer("sky");
+  removeTerrainDemSourceIfUnused();
+}
+
+function toggle3dTerrain() {
+  if (!navigator.onLine && !terrain3dOn) {
+    alert("3D terrain needs an internet connection — it isn't downloaded for offline use.");
+    return;
+  }
+  terrain3dOn = !terrain3dOn;
+  if (terrain3dOn) {
+    add3dTerrainLayers();
+    map.easeTo({ pitch: TERRAIN_3D_PITCH, duration: 800 });
+  } else {
+    remove3dTerrainLayers();
+    map.easeTo({ pitch: 0, duration: 800 });
+  }
+  const btn = document.getElementById("btn-3d");
+  if (btn) btn.classList.toggle("active-pill", terrain3dOn);
+}
+
+document.getElementById("btn-3d")?.addEventListener("click", toggle3dTerrain);
 
 // ---------- Cell tower locations (rough coverage proxy) ----------
 let cellTowersOn = false;
