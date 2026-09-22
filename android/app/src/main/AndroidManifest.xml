@@ -11,7 +11,7 @@
     <application
         android:theme="@style/Theme.Trailmark"
         android:label="Trailmark"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@drawable/ic_trailmark">
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
