@@ -1,6 +1,12 @@
 {
-  "current": "1.19",
+  "current": "1.20",
   "history": [
+    {
+      "version": "1.20",
+      "date": "2026-09-22",
+      "summary": "Redesign the bottom toolbar: Go, Tools, My Content",
+      "commit": "181d649"
+    },
     {
       "version": "1.19",
       "date": "2026-09-22",
