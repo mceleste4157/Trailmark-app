@@ -1,6 +1,12 @@
 {
-  "current": "1.29",
+  "current": "1.30",
   "history": [
+    {
+      "version": "1.30",
+      "date": "2026-09-22",
+      "summary": "Add undo-after-delete, waypoint rename/export, My Content search, and a defensive fallback for bad imported trail names",
+      "commit": "a9fc457"
+    },
     {
       "version": "1.29",
       "date": "2026-09-22",
