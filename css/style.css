@@ -202,14 +202,23 @@ html, body {
 #toolbar button {
   position: relative;
   flex: 1;
-  padding: 10px 4px;
-  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 2px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-radius: 14px;
   cursor: pointer;
+}
+
+#toolbar .toolbar-icon {
+  font-size: 20px;
+  line-height: 1;
 }
 
 #chat-badge {
@@ -234,9 +243,8 @@ html, body {
 }
 
 #toolbar button.active {
-  background: var(--accent);
-  border-color: var(--accent-bright);
-  color: white;
+  background: rgba(var(--panel-rgb), 0.7);
+  color: var(--text);
 }
 
 #panel {
