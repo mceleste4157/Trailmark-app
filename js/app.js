@@ -172,7 +172,12 @@ map.on("error", (e) => {
     document.getElementById("map-hint").classList.remove("hidden");
   }
 });
-map.addControl(new maplibregl.NavigationControl(), "bottom-right");
+// showCompass: false — MapLibre's default 3rd button here (rotate/reset-
+// bearing) duplicates the app's own North-up/heading-up toggle
+// (#btn-orientation in the stats HUD), just smaller, unlabeled, and
+// easy to hit by accident right next to zoom in/out. One clear control
+// for map bearing instead of two different ones doing similar things.
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
 const geolocateControl = new maplibregl.GeolocateControl({
   positionOptions: { enableHighAccuracy: true },
   trackUserLocation: true,
@@ -228,7 +233,11 @@ btnOrientation.addEventListener("click", () => {
 });
 
 function updateStatsHud(position) {
-  statsHud.classList.remove("hidden");
+  // No longer gated behind a "hidden" class waiting for the first GPS
+  // fix — the North-up/track-up toggle inside this HUD is useful (and
+  // should be discoverable) even before location is on, same reasoning
+  // as the tilt stat already showing "--" rather than not existing at
+  // all until its sensor is enabled.
   const { speed, heading, altitude } = position.coords;
 
   statSpeedEl.textContent = typeof speed === "number" && isFinite(speed) && speed >= 0 ? Math.round(speed * 2.23694) : "--";
@@ -455,6 +464,10 @@ function breadcrumbDayKey(t) {
 function breadcrumbPointsByDay() {
   const byDay = new Map();
   for (const p of breadcrumbPoints) {
+    // A point with no usable timestamp can't be grouped into a real day
+    // — skip it rather than let it form a "NaN-NaN-NaN" key, which
+    // renders as a literal "Invalid Date" entry in My Content.
+    if (typeof p.t !== "number" || !isFinite(p.t)) continue;
     const key = breadcrumbDayKey(p.t);
     if (!byDay.has(key)) byDay.set(key, []);
     byDay.get(key).push(p);
@@ -2120,36 +2133,7 @@ async function openTrailsPanel() {
   const tripFolders = await TripFolderStore.listFolders();
   const folderNameById = new Map(tripFolders.map((f) => [f.id, f.name]));
   const breadcrumbCount = await BreadcrumbStore.count();
-  const breadcrumbByDay = breadcrumbPointsByDay();
-  // Newest first — the most recent ride is what you're most likely to be
-  // toggling/renaming right after a trip.
-  const breadcrumbEntries = Array.from(breadcrumbByDay.entries()).reverse();
-  const breadcrumbRows = breadcrumbEntries
-    .map(([dayKey, points], reverseIndex) => {
-      // Color assignment stays keyed to chronological order (see
-      // breadcrumbPointsByDay's own comment) even though we list newest-first.
-      const i = breadcrumbEntries.length - 1 - reverseIndex;
-      const color = breadcrumbDayColor(dayKey, i);
-      const visible = isBreadcrumbDayVisible(dayKey);
-      const label = breadcrumbDayLabel(dayKey);
-      const dateStr = breadcrumbDayDateLabel(dayKey);
-      const timeStr = breadcrumbDayTimeRange(points);
-      return `
-      <div class="trail-item" data-breadcrumb-day="${dayKey}">
-        <div style="display:flex;align-items:center;gap:8px;min-width:0;">
-          <input type="color" class="breadcrumb-day-color" data-day="${dayKey}" value="${color}" title="Change this day's color" style="width:18px;height:18px;flex:none;padding:0;border:none;border-radius:50%;background:none;cursor:pointer;" />
-          <div style="min-width:0;">
-            <div class="breadcrumb-day-label" style="${visible ? "" : "color:var(--text-dim);text-decoration:line-through;"}">${escHtml(label)} <small style="color:var(--text-dim);">(${points.length} pts)</small></div>
-            <small>${escHtml(dateStr)}${timeStr ? " · " + escHtml(timeStr) : ""}</small>
-          </div>
-        </div>
-        <div>
-          <button class="pill-btn breadcrumb-day-toggle" data-day="${dayKey}">${visible ? "Hide" : "Show"}</button>
-          <button class="pill-btn breadcrumb-day-rename" data-day="${dayKey}">Rename</button>
-        </div>
-      </div>`;
-    })
-    .join("");
+  const breadcrumbRows = rebuildBreadcrumbRows();
   const rows = trails
     .map(
       (t) => `
@@ -2197,29 +2181,30 @@ async function openTrailsPanel() {
   openPanel(
     "My Content",
     `
+    ${
+      trails.length + waypoints.length > 0
+        ? `<input type="search" id="content-search" placeholder="Search trails & waypoints…" style="margin-bottom:12px;" />`
+        : ""
+    }
+    <h4 style="margin-bottom:4px;">Trails &amp; Routes</h4>
+    <div id="trail-rows">${rows || "<p>No saved trails yet. Tap Go to track one.</p>"}</div>
+    <h4 style="margin-bottom:4px;margin-top:14px;">Waypoints</h4>
+    <div id="waypoint-rows">${waypointRows || "<p>No waypoints dropped yet.</p>"}</div>
+
+    <h4 style="margin-bottom:4px;margin-top:20px;color:var(--text-dim);">Manage</h4>
     <div class="region-item">
       <div><div>Import GPX</div><small>From onX, Gaia, AllTrails, or a GPS unit — brings in the track and any waypoints</small></div>
       <button class="pill-btn" id="import-gpx-btn">Import</button>
     </div>
     <input type="file" id="import-gpx-input" accept=".gpx,application/gpx+xml" style="display:none;" />
     <div class="region-item">
-      <div><div>Breadcrumb trail</div><small>${breadcrumbCount} points logged passively — everywhere you've been, not a named trail</small></div>
-      <button class="pill-btn danger" id="clear-breadcrumb-btn">Clear</button>
+      <div><div>Breadcrumb Trail</div><small>${breadcrumbCount} pts — automatic background location history, separate from the trails above</small></div>
+      <button class="pill-btn" id="open-breadcrumb-btn">Manage</button>
     </div>
-    ${breadcrumbRows}
     <div class="region-item">
       <div><div>Trip Folders</div><small>Group your own trails/waypoints into a trip — stays on this device</small></div>
       <button class="pill-btn" id="open-personal-folders-btn">Manage</button>
     </div>
-    ${
-      trails.length + waypoints.length > 0
-        ? `<input type="search" id="content-search" placeholder="Search trails & waypoints…" style="margin-top:12px;" />`
-        : ""
-    }
-    <h4 style="margin-bottom:4px;margin-top:14px;">Trails &amp; Routes</h4>
-    <div id="trail-rows">${rows || "<p>No saved trails yet. Tap Go to track one.</p>"}</div>
-    <h4 style="margin-bottom:4px;margin-top:14px;">Waypoints</h4>
-    <div id="waypoint-rows">${waypointRows || "<p>No waypoints dropped yet.</p>"}</div>
     `
   );
   const contentSearch = document.getElementById("content-search");
@@ -2232,6 +2217,7 @@ async function openTrailsPanel() {
     });
   }
   document.getElementById("open-personal-folders-btn").addEventListener("click", openPersonalFoldersPanel);
+  document.getElementById("open-breadcrumb-btn").addEventListener("click", () => openBreadcrumbPanel(breadcrumbCount, breadcrumbRows));
   document.getElementById("import-gpx-btn").addEventListener("click", () => {
     document.getElementById("import-gpx-input").click();
   });
@@ -2245,34 +2231,6 @@ async function openTrailsPanel() {
       alert("Couldn't import that GPX file: " + err.message);
     }
     openTrailsPanel();
-  });
-  document.getElementById("clear-breadcrumb-btn").addEventListener("click", async () => {
-    if (!confirm(`Clear all ${breadcrumbCount} breadcrumb points? This can't be undone.`)) return;
-    await clearBreadcrumbTrail();
-    openTrailsPanel();
-  });
-  panelBody.querySelectorAll(".breadcrumb-day-color").forEach((input) => {
-    input.addEventListener("input", (e) => {
-      setBreadcrumbDayColor(e.target.dataset.day, e.target.value);
-      drawBreadcrumbLine();
-    });
-  });
-  panelBody.querySelectorAll(".breadcrumb-day-toggle").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      toggleBreadcrumbDayVisible(btn.dataset.day);
-      drawBreadcrumbLine();
-      openTrailsPanel(); // re-render the legend so the strikethrough/dim state and Hide/Show label update
-    });
-  });
-  panelBody.querySelectorAll(".breadcrumb-day-rename").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const dayKey = btn.dataset.day;
-      const current = breadcrumbDayPrefs[dayKey]?.name || "";
-      const name = prompt(`Rename ${breadcrumbDayDateLabel(dayKey)}'s breadcrumb trail (leave blank to just show the date):`, current);
-      if (name === null) return; // cancelled
-      setBreadcrumbDayName(dayKey, name);
-      openTrailsPanel();
-    });
   });
 
   panelBody.querySelectorAll(".trail-item[data-id] button").forEach((btn) => {
@@ -2373,6 +2331,96 @@ async function openTrailsPanel() {
       }
     });
   });
+}
+
+// ---------- Breadcrumb trail (background location history) ----------
+// Its own panel rather than always-expanded inline in My Content — the
+// per-day color/rename/hide legend was competing for space with (and
+// visually resembling) actual saved trails, which is what made it read
+// as unclear clutter rather than a distinct feature. breadcrumbCount/
+// breadcrumbRows are passed in already computed by the caller
+// (openTrailsPanel) rather than recomputed here, since both need the
+// exact same data and there's no reason to query it twice.
+function openBreadcrumbPanel(breadcrumbCount, breadcrumbRows) {
+  openPanel(
+    "Breadcrumb Trail",
+    `
+    <p style="color:var(--text-dim);font-size:13px;">
+      Logged automatically in the background any time the app is open and has a location fix — not something you start
+      or name yourself, and separate from the trails you explicitly record with Go &amp; Track. Useful for seeing
+      everywhere you've been at a glance, grouped here by day.
+    </p>
+    <div class="region-item">
+      <div><div>${breadcrumbCount} points logged</div><small>Clear erases this background history — your saved trails and waypoints aren't affected</small></div>
+      <button class="pill-btn danger" id="clear-breadcrumb-btn">Clear</button>
+    </div>
+    ${breadcrumbRows || '<p style="color:var(--text-dim);font-size:13px;">No days logged yet.</p>'}
+    <button class="primary" id="back-to-content-from-breadcrumb-btn" style="background:var(--panel);border:1px solid var(--border);margin-top:12px;">Back</button>
+    `
+  );
+  document.getElementById("clear-breadcrumb-btn").addEventListener("click", async () => {
+    if (!confirm(`Clear all ${breadcrumbCount} breadcrumb points? This can't be undone.`)) return;
+    await clearBreadcrumbTrail();
+    openTrailsPanel();
+  });
+  document.getElementById("back-to-content-from-breadcrumb-btn").addEventListener("click", openTrailsPanel);
+  panelBody.querySelectorAll(".breadcrumb-day-color").forEach((input) => {
+    input.addEventListener("input", (e) => {
+      setBreadcrumbDayColor(e.target.dataset.day, e.target.value);
+      drawBreadcrumbLine();
+    });
+  });
+  panelBody.querySelectorAll(".breadcrumb-day-toggle").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      toggleBreadcrumbDayVisible(btn.dataset.day);
+      drawBreadcrumbLine();
+      // Re-render with fresh counts/rows rather than re-opening My
+      // Content and losing the user's place in this panel.
+      openBreadcrumbPanel(await BreadcrumbStore.count(), rebuildBreadcrumbRows());
+    });
+  });
+  panelBody.querySelectorAll(".breadcrumb-day-rename").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const dayKey = btn.dataset.day;
+      const current = breadcrumbDayPrefs[dayKey]?.name || "";
+      const name = prompt(`Rename ${breadcrumbDayDateLabel(dayKey)}'s breadcrumb trail (leave blank to just show the date):`, current);
+      if (name === null) return; // cancelled
+      setBreadcrumbDayName(dayKey, name);
+      openBreadcrumbPanel(await BreadcrumbStore.count(), rebuildBreadcrumbRows());
+    });
+  });
+}
+
+// Shared by openTrailsPanel (initial render) and openBreadcrumbPanel
+// (re-render after a toggle/rename, without navigating back to My
+// Content first) — same HTML generation either way.
+function rebuildBreadcrumbRows() {
+  const breadcrumbByDay = breadcrumbPointsByDay();
+  const breadcrumbEntries = Array.from(breadcrumbByDay.entries()).reverse();
+  return breadcrumbEntries
+    .map(([dayKey, points], reverseIndex) => {
+      const i = breadcrumbEntries.length - 1 - reverseIndex;
+      const color = breadcrumbDayColor(dayKey, i);
+      const visible = isBreadcrumbDayVisible(dayKey);
+      const label = breadcrumbDayLabel(dayKey);
+      const dateStr = breadcrumbDayDateLabel(dayKey);
+      const timeStr = breadcrumbDayTimeRange(points);
+      return `
+      <div class="trail-item" data-breadcrumb-day="${dayKey}">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+          <input type="color" class="breadcrumb-day-color" data-day="${dayKey}" value="${color}" title="Change this day's color" style="width:18px;height:18px;flex:none;padding:0;border:none;border-radius:50%;background:none;cursor:pointer;" />
+          <div style="min-width:0;">
+            <div class="breadcrumb-day-label" style="${visible ? "" : "color:var(--text-dim);text-decoration:line-through;"}">${escHtml(label)} <small style="color:var(--text-dim);">(${points.length} pts)</small></div>
+            <small>${escHtml(dateStr)}${timeStr ? " · " + escHtml(timeStr) : ""}</small>
+          </div>
+        </div>
+        <div>
+          <button class="pill-btn breadcrumb-day-toggle" data-day="${dayKey}">${visible ? "Hide" : "Show"}</button>
+          <button class="pill-btn breadcrumb-day-rename" data-day="${dayKey}">Rename</button>
+        </div>
+      </div>`;
+    })
+    .join("");
 }
 
 // ---------- Personal trip folders (local-only grouping of My Content) ----------
