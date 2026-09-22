@@ -61,6 +61,19 @@ db.version(5).stores({
   photos: "++id, createdAt",
 });
 
+db.version(6).stores({
+  trails: "++id, name, createdAt",
+  waypoints: "++id, name, createdAt",
+  regions: null,
+  breadcrumbs: "++id, t",
+  customAreas: "++id, &name, downloadedAt",
+  photos: "++id, createdAt",
+  // Personal trip folders ("Windrock weekend") — local-only, not synced
+  // to Supabase (unlike the trails/waypoints they group), since they're
+  // purely an on-device organizing tool. See TripFolderStore below.
+  tripFolders: "++id, name, createdAt",
+});
+
 const TrailStore = {
   async saveTrail({ name, kind, points, distanceMeters, startedAt, endedAt, difficulty }) {
     return db.trails.add({
@@ -73,6 +86,7 @@ const TrailStore = {
       difficulty: difficulty || null, // 1-10, onX-style technical difficulty rating
       createdAt: Date.now(),
       remoteId: null, // set once this trail has been pushed to personal_trails — see syncPersonalData() in js/app.js
+      folderId: null, // local-only trip folder — see TripFolderStore
     });
   },
   async setDifficulty(id, difficulty) {
@@ -80,6 +94,15 @@ const TrailStore = {
   },
   async renameTrail(id, name) {
     return db.trails.update(id, { name });
+  },
+  async assignFolder(id, folderId) {
+    return db.trails.update(id, { folderId: folderId || null });
+  },
+  // Overwrites a trail's points in place (id, name, etc. untouched) — used
+  // to backfill real elevation from USGS after the fact. See
+  // backfillTrailElevation() in js/app.js.
+  async updateTrailPoints(id, points) {
+    return db.trails.update(id, { points });
   },
   async listTrails() {
     return db.trails.orderBy("createdAt").reverse().toArray();
@@ -112,15 +135,20 @@ const TrailStore = {
 const WAYPOINT_CATEGORIES = ["trailhead", "campsite", "fuel", "water_crossing", "obstacle", "hazard", "other"];
 
 const WaypointStore = {
-  async saveWaypoint({ name, lat, lng, note, category }) {
+  // severity: 1 (minor) - 3 (major) — only meaningful for the
+  // water_crossing/obstacle/hazard categories (enforced client-side, see
+  // WAYPOINT_SEVERITY_CATEGORIES in js/app.js); null/omitted otherwise.
+  async saveWaypoint({ name, lat, lng, note, category, severity }) {
     return db.waypoints.add({
       name,
       lat,
       lng,
       note: note || "",
       category: category || "other",
+      severity: severity || null,
       createdAt: Date.now(),
       remoteId: null, // set once this waypoint has been pushed to personal_waypoints — see syncPersonalData() in js/app.js
+      folderId: null, // local-only trip folder — see TripFolderStore
     });
   },
   async listWaypoints() {
@@ -129,11 +157,14 @@ const WaypointStore = {
   async getWaypoint(id) {
     return db.waypoints.get(id);
   },
-  async updateWaypoint(id, { name, note, category }) {
-    return db.waypoints.update(id, { name, note, category });
+  async updateWaypoint(id, { name, note, category, severity }) {
+    return db.waypoints.update(id, { name, note, category, severity: severity || null });
   },
   async moveWaypoint(id, lat, lng) {
     return db.waypoints.update(id, { lat, lng });
+  },
+  async assignFolder(id, folderId) {
+    return db.waypoints.update(id, { folderId: folderId || null });
   },
   async deleteWaypoint(id) {
     return db.waypoints.delete(id);
@@ -151,6 +182,32 @@ const WaypointStore = {
   // just be saveWaypoint().
   async importSynced(wp) {
     return db.waypoints.add(wp);
+  },
+};
+
+// Local-only grouping of personal trails/waypoints into a named trip
+// ("Windrock weekend") — deliberately not synced to Supabase, unlike the
+// trails/waypoints themselves, since it's just an on-device organizing
+// tool rather than data worth backing up. See openPersonalFoldersPanel
+// in js/app.js.
+const TripFolderStore = {
+  async createFolder(name) {
+    return db.tripFolders.add({ name, createdAt: Date.now() });
+  },
+  async listFolders() {
+    return db.tripFolders.orderBy("createdAt").reverse().toArray();
+  },
+  async renameFolder(id, name) {
+    return db.tripFolders.update(id, { name });
+  },
+  // Un-assigns this folder from every trail/waypoint that had it before
+  // deleting it, so nothing is left pointing at a folderId that no
+  // longer exists. filter() rather than where(), since folderId isn't
+  // (and doesn't need to be) an indexed field — these tables are small.
+  async deleteFolder(id) {
+    await db.trails.filter((t) => t.folderId === id).modify({ folderId: null });
+    await db.waypoints.filter((w) => w.folderId === id).modify({ folderId: null });
+    return db.tripFolders.delete(id);
   },
 };
 

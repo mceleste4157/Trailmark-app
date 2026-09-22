@@ -114,10 +114,16 @@ create table if not exists shared_waypoints (
   lat double precision not null,
   lng double precision not null,
   category text not null default 'other', -- trailhead | campsite | fuel | water_crossing | obstacle | hazard | other (enforced client-side)
+  severity smallint check (severity is null or severity between 1 and 3), -- 1 (minor) - 3 (major); only meaningful for water_crossing/obstacle/hazard (enforced client-side)
   folder_id uuid references folders(id) on delete set null,
   photo_path text, -- path within the 'trail-photos' storage bucket, if any
   created_at timestamptz not null default now()
 );
+
+-- create table is a no-op on a database where this table already
+-- existed before the severity column above was added, so add it
+-- explicitly too — idempotent, safe to re-run.
+alter table shared_waypoints add column if not exists severity smallint check (severity is null or severity between 1 and 3);
 
 alter table shared_waypoints enable row level security;
 
@@ -313,8 +319,11 @@ create table if not exists personal_waypoints (
   lng double precision not null,
   note text default '',
   category text not null default 'other',
+  severity smallint check (severity is null or severity between 1 and 3), -- see the note on shared_waypoints.severity above
   created_at bigint not null
 );
+
+alter table personal_waypoints add column if not exists severity smallint check (severity is null or severity between 1 and 3);
 
 alter table personal_waypoints enable row level security;
 

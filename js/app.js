@@ -791,6 +791,36 @@ function categoryOptionsHtml(selected) {
   ).join("");
 }
 
+// Severity only means something for these three — "how bad is this
+// water crossing/obstacle/hazard right now" — not for a trailhead or
+// fuel stop, so the field is hidden entirely for other categories
+// rather than showing a meaningless control.
+const WAYPOINT_SEVERITY_CATEGORIES = ["water_crossing", "obstacle", "hazard"];
+const SEVERITY_LABELS = { 1: "Minor", 2: "Moderate", 3: "Major" };
+const SEVERITY_COLORS = { 1: "#eab308", 2: "#f97316", 3: "#dc2626" };
+
+function severityFieldHtml(selectId, selected, category) {
+  const hidden = WAYPOINT_SEVERITY_CATEGORIES.includes(category) ? "" : "hidden";
+  return `<div id="${selectId}-wrap" ${hidden}>
+    <label>Severity</label>
+    <select id="${selectId}" style="width:100%;margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);">
+      <option value="">Not set</option>
+      ${[1, 2, 3].map((s) => `<option value="${s}" ${Number(selected) === s ? "selected" : ""}>${SEVERITY_LABELS[s]}</option>`).join("")}
+    </select>
+  </div>`;
+}
+
+// Wires a category <select> to show/hide a severity <select> next to it —
+// shared by the drop-waypoint and edit-waypoint forms.
+function wireSeverityVisibility(categorySelectId, severityWrapId) {
+  const categorySelect = document.getElementById(categorySelectId);
+  const wrap = document.getElementById(severityWrapId);
+  if (!categorySelect || !wrap) return;
+  categorySelect.addEventListener("change", () => {
+    wrap.hidden = !WAYPOINT_SEVERITY_CATEGORIES.includes(categorySelect.value);
+  });
+}
+
 function buildWaypointPopupContent(wp) {
   const container = document.createElement("div");
   container.style.maxWidth = "220px";
@@ -798,6 +828,13 @@ function buildWaypointPopupContent(wp) {
   const title = document.createElement("div");
   title.innerHTML = `<strong>${escHtml(wp.name)}</strong> <span style="color:#6b7280;font-size:12px;">(${CATEGORY_LABELS[wp.category] || "Other"})</span>`;
   container.appendChild(title);
+
+  if (wp.severity) {
+    const sev = document.createElement("div");
+    sev.style.cssText = `font-size:12px;font-weight:700;margin-top:2px;color:${SEVERITY_COLORS[wp.severity]};`;
+    sev.textContent = `⚠ ${SEVERITY_LABELS[wp.severity]}`;
+    container.appendChild(sev);
+  }
 
   if (wp.note) {
     const note = document.createElement("div");
@@ -864,18 +901,24 @@ function openEditWaypointPanel(wp) {
     <select id="wp-edit-category" style="width:100%;margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);">
       ${categoryOptionsHtml(wp.category)}
     </select>
+    ${severityFieldHtml("wp-edit-severity", wp.severity, wp.category)}
     <label>Note (optional)</label>
     <textarea id="wp-edit-note" rows="2">${escHtml(wp.note || "")}</textarea>
     <button class="primary" id="wp-edit-save">Save Changes</button>
     <button class="primary" id="wp-edit-delete" style="background:var(--danger);border:none;margin-top:8px;">Delete Waypoint</button>
     `
   );
+  wireSeverityVisibility("wp-edit-category", "wp-edit-severity-wrap");
   document.getElementById("wp-edit-save").addEventListener("click", async () => {
     const name = document.getElementById("wp-edit-name").value.trim() || "Unnamed waypoint";
     const category = document.getElementById("wp-edit-category").value;
+    const severity = WAYPOINT_SEVERITY_CATEGORIES.includes(category)
+      ? parseInt(document.getElementById("wp-edit-severity").value, 10) || null
+      : null;
     const note = document.getElementById("wp-edit-note").value.trim();
-    await WaypointStore.updateWaypoint(wp.id, { name, note, category });
+    await WaypointStore.updateWaypoint(wp.id, { name, note, category, severity });
     await refreshWaypointMarkers();
+    if (wp.remoteId && session) GroupBackend.upsertPersonalWaypoint({ ...wp, name, note, category, severity }).catch(() => {});
     closePanel();
   });
   document.getElementById("wp-edit-delete").addEventListener("click", async () => {
@@ -1070,6 +1113,12 @@ async function refreshGroupWaypointMarkers(rows) {
       CATEGORY_LABELS[row.category] || "Other"
     })</span>`;
     container.appendChild(title);
+    if (row.severity) {
+      const sev = document.createElement("div");
+      sev.style.cssText = `font-size:12px;font-weight:700;margin-top:2px;color:${SEVERITY_COLORS[row.severity]};`;
+      sev.textContent = `⚠ ${SEVERITY_LABELS[row.severity]}`;
+      container.appendChild(sev);
+    }
     if (row.note) {
       const note = document.createElement("div");
       note.style.cssText = "font-size:12px;margin-top:4px;";
@@ -1162,6 +1211,7 @@ function openWaypointPanel() {
     <select id="wp-category" style="width:100%;margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);">
       ${categoryOptionsHtml("other")}
     </select>
+    ${severityFieldHtml("wp-severity", "", "other")}
     <label>Note (optional)</label>
     <textarea id="wp-note" rows="2" placeholder="Notes..."></textarea>
     ${
@@ -1174,6 +1224,7 @@ function openWaypointPanel() {
     <button class="primary" id="wp-save">Save Waypoint Here</button>
     `
   );
+  wireSeverityVisibility("wp-category", "wp-severity-wrap");
   document.getElementById("wp-save").addEventListener("click", () => {
     if (!("geolocation" in navigator)) {
       alert("Geolocation isn't available on this device.");
@@ -1181,6 +1232,9 @@ function openWaypointPanel() {
     }
     const name = document.getElementById("wp-name").value.trim() || "Unnamed waypoint";
     const category = document.getElementById("wp-category").value;
+    const severity = WAYPOINT_SEVERITY_CATEGORIES.includes(category)
+      ? parseInt(document.getElementById("wp-severity").value, 10) || null
+      : null;
     const note = document.getElementById("wp-note").value.trim();
     const saveBtn = document.getElementById("wp-save");
     saveBtn.disabled = true;
@@ -1189,7 +1243,7 @@ function openWaypointPanel() {
       async (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
-        await WaypointStore.saveWaypoint({ name, lat, lng, note, category });
+        await WaypointStore.saveWaypoint({ name, lat, lng, note, category, severity });
         await refreshWaypointMarkers();
         syncPersonalData().catch(() => {});
 
@@ -1198,7 +1252,7 @@ function openWaypointPanel() {
           const photoInput = document.getElementById("wp-photo");
           const photoFile = photoInput && photoInput.files[0] ? photoInput.files[0] : null;
           try {
-            await GroupBackend.addWaypoint({ name, note, lat, lng, category, photoFile });
+            await GroupBackend.addWaypoint({ name, note, lat, lng, category, severity, photoFile });
           } catch (err) {
             alert("Saved locally, but could not share it: " + err.message);
           }
@@ -1298,7 +1352,7 @@ document.getElementById("btn-stop-recording").addEventListener("click", async ()
     return;
   }
 
-  await TrailStore.saveTrail({
+  const savedTrailId = await TrailStore.saveTrail({
     name: window.__pendingTrailName || "Unnamed trail",
     kind: "recorded",
     points: result.points,
@@ -1307,6 +1361,7 @@ document.getElementById("btn-stop-recording").addEventListener("click", async ()
     endedAt: result.endedAt,
   });
   syncPersonalData().catch(() => {});
+  backfillAndSaveTrailElevation(savedTrailId);
 
   if (liveTrailSourceId) {
     map.removeLayer(liveTrailSourceId);
@@ -1395,7 +1450,7 @@ document.getElementById("btn-planning-finish").addEventListener("click", async (
   const points = planningPoints;
   const name = planningName;
   stopPlanningRoute();
-  await TrailStore.saveTrail({
+  const savedTrailId = await TrailStore.saveTrail({
     name,
     kind: "planned",
     points,
@@ -1404,6 +1459,7 @@ document.getElementById("btn-planning-finish").addEventListener("click", async (
     endedAt: null,
   });
   syncPersonalData().catch(() => {});
+  backfillAndSaveTrailElevation(savedTrailId);
   alert(`Saved "${name}" — find it under My Content.`);
 });
 
@@ -1693,6 +1749,100 @@ function trailHasElevation(t) {
   return false;
 }
 
+// ---------- Elevation backfill (USGS Elevation Point Query Service) ----------
+// Device GPS altitude is unreliable across browsers/devices (see the
+// comment in updateStatsHud) and a planned route (drawn by tapping the
+// map, not GPS-tracked) has no altitude at all. Rather than a live
+// per-point network lookup during recording — impractical over a
+// multi-hour ride with spotty backcountry connectivity — this fills gaps
+// in *after* a trail is saved: sample a modest number of points spread
+// across the track from USGS's free, CORS-enabled, no-API-key Elevation
+// Point Query Service (US coverage only, which matches this app's
+// southeast-US scope) and linearly interpolate the rest. Best-effort:
+// every failure is caught internally, so this never throws — offline or
+// a flaky connection just means the trail keeps whatever elevation (if
+// any) it already had, and callers don't need their own .catch().
+const USGS_EPQS_URL = "https://epqs.nationalmap.gov/v1/json";
+const ELEVATION_BACKFILL_MAX_SAMPLES = 60;
+
+async function fetchUsgsElevationMeters(lat, lng) {
+  const url = `${USGS_EPQS_URL}?x=${lng}&y=${lat}&units=Meters&wkid=4326&includeDate=false`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`USGS EPQS returned ${res.status}`);
+  const data = await res.json();
+  const meters = parseFloat(data.value);
+  if (!isFinite(meters)) throw new Error("USGS EPQS returned no elevation for this point");
+  return meters;
+}
+
+// Returns the trail's points with elevation filled in, or null if it
+// didn't need backfilling (already had most of it) or the backfill
+// couldn't get enough samples to interpolate from (offline, etc.) —
+// never throws.
+async function backfillTrailElevation(trail) {
+  try {
+    const points = trail.points;
+    if (!points || points.length < 2) return null;
+    const missing = points.filter((p) => typeof p.ele !== "number").length;
+    if (missing / points.length < 0.5) return null; // device already gave us most of it — not worth the round trips
+
+    const sampleCount = Math.min(ELEVATION_BACKFILL_MAX_SAMPLES, points.length);
+    const sampleIndices = new Set();
+    for (let i = 0; i < sampleCount; i++) {
+      sampleIndices.add(Math.round((i * (points.length - 1)) / (sampleCount - 1)));
+    }
+
+    const sampledEle = new Map(); // index -> meters
+    for (const idx of sampleIndices) {
+      try {
+        sampledEle.set(idx, await fetchUsgsElevationMeters(points[idx].lat, points[idx].lng));
+      } catch (err) {
+        console.warn("USGS elevation lookup failed for point", idx, err.message);
+      }
+      await new Promise((r) => setTimeout(r, 120)); // stay polite to a free public service
+    }
+    if (sampledEle.size < 2) return null; // not enough to interpolate from
+
+    const sampledSorted = Array.from(sampledEle.keys()).sort((a, b) => a - b);
+    const newPoints = points.map((p) => ({ ...p }));
+    for (let s = 0; s < sampledSorted.length - 1; s++) {
+      const i0 = sampledSorted[s];
+      const i1 = sampledSorted[s + 1];
+      const e0 = sampledEle.get(i0);
+      const e1 = sampledEle.get(i1);
+      for (let i = i0; i <= i1; i++) {
+        const t = i1 === i0 ? 0 : (i - i0) / (i1 - i0);
+        newPoints[i].ele = e0 + (e1 - e0) * t;
+      }
+    }
+    // Points before the first sample or after the last take the nearest
+    // sample's value rather than staying unset.
+    const firstIdx = sampledSorted[0];
+    const lastIdx = sampledSorted[sampledSorted.length - 1];
+    for (let i = 0; i < firstIdx; i++) newPoints[i].ele = sampledEle.get(firstIdx);
+    for (let i = lastIdx + 1; i < newPoints.length; i++) newPoints[i].ele = sampledEle.get(lastIdx);
+
+    return newPoints;
+  } catch (err) {
+    console.warn("Elevation backfill failed:", err.message);
+    return null;
+  }
+}
+
+// Runs the backfill and, if it produced anything, persists it and pushes
+// the update to the personal backup if this trail's already synced.
+// Fire-and-forget safe (never throws) — call without .catch().
+async function backfillAndSaveTrailElevation(trailId) {
+  const trail = await TrailStore.getTrail(trailId);
+  if (!trail) return;
+  const newPoints = await backfillTrailElevation(trail);
+  if (!newPoints) return;
+  await TrailStore.updateTrailPoints(trailId, newPoints);
+  if (trail.remoteId && session) {
+    GroupBackend.upsertPersonalTrail({ ...trail, points: newPoints }).catch(() => {});
+  }
+}
+
 // Returns { series: [{distMi, eleFt}], gainFt, lossFt, minFt, maxFt } or
 // null if the trail doesn't have enough elevation samples to plot.
 function buildElevationProfile(trail) {
@@ -1851,8 +2001,22 @@ function openElevationProfilePanel(trail) {
   if (!profile) {
     openPanel(
       `${trail.name} — Elevation`,
-      `<p>No elevation data on this trail. GPS altitude support varies a lot by device/browser, so some rides won't have it — especially planned routes, which aren't GPS-tracked at all.</p>`
+      `<p>No elevation data on this trail. GPS altitude support varies a lot by device/browser, so some rides won't have it — especially planned routes, which aren't GPS-tracked at all.</p>
+      <button class="primary" id="elev-backfill-btn">Fetch Elevation from USGS</button>`
     );
+    document.getElementById("elev-backfill-btn").addEventListener("click", async (e) => {
+      e.target.disabled = true;
+      e.target.textContent = "Fetching…";
+      await backfillAndSaveTrailElevation(trail.id);
+      const updated = await TrailStore.getTrail(trail.id);
+      if (buildElevationProfile(updated)) {
+        openElevationProfilePanel(updated);
+      } else {
+        e.target.disabled = false;
+        e.target.textContent = "Fetch Elevation from USGS";
+        alert("Couldn't get elevation data — check your connection and try again.");
+      }
+    });
     return;
   }
   const { gainFt, lossFt, minFt, maxFt } = profile;
@@ -1874,6 +2038,8 @@ function openElevationProfilePanel(trail) {
 async function openTrailsPanel() {
   const trails = await TrailStore.listTrails();
   const waypoints = await WaypointStore.listWaypoints();
+  const tripFolders = await TripFolderStore.listFolders();
+  const folderNameById = new Map(tripFolders.map((f) => [f.id, f.name]));
   const breadcrumbCount = await BreadcrumbStore.count();
   const breadcrumbByDay = breadcrumbPointsByDay();
   // Newest first — the most recent ride is what you're most likely to be
@@ -1910,12 +2076,14 @@ async function openTrailsPanel() {
       (t) => `
       <div class="trail-item" data-id="${t.id}" data-search="${escHtml(t.name.toLowerCase())}">
         <div>
-          <div>${escHtml(t.name)} <small style="color:var(--text-dim);">${t.kind === "planned" ? "(planned)" : t.kind === "imported" ? "(imported)" : "(recorded)"}</small></div>
+          <div>${escHtml(t.name)} <small style="color:var(--text-dim);">${t.kind === "planned" ? "(planned)" : t.kind === "imported" ? "(imported)" : "(recorded)"}</small>${
+            t.folderId && folderNameById.has(t.folderId) ? ` <small style="color:var(--accent-bright);">📁 ${escHtml(folderNameById.get(t.folderId))}</small>` : ""
+          }</div>
           <small>${metersToMiles(t.distanceMeters).toFixed(2)} mi · ${difficultyLabel(t.difficulty)} · ${new Date(t.createdAt).toLocaleDateString()}</small>
         </div>
         <div>
           <button class="pill-btn" data-action="show">Show</button>
-          ${trailHasElevation(t) ? '<button class="pill-btn" data-action="profile">Profile</button>' : ""}
+          <button class="pill-btn" data-action="profile">${trailHasElevation(t) ? "Profile" : "Elevation"}</button>
           <button class="pill-btn" data-action="rename">Rename</button>
           <button class="pill-btn" data-action="rate">Rate</button>
           <button class="pill-btn" data-action="export">GPX</button>
@@ -1930,7 +2098,11 @@ async function openTrailsPanel() {
       (wp) => `
       <div class="trail-item" data-wp-id="${wp.id}" data-search="${escHtml(wp.name.toLowerCase())}">
         <div>
-          <div>${escHtml(wp.name)} <small style="color:var(--text-dim);">(${CATEGORY_LABELS[wp.category] || "Other"})</small></div>
+          <div>${escHtml(wp.name)} <small style="color:var(--text-dim);">(${CATEGORY_LABELS[wp.category] || "Other"})</small>${
+            wp.severity ? ` <small style="color:${SEVERITY_COLORS[wp.severity]};font-weight:700;">⚠ ${SEVERITY_LABELS[wp.severity]}</small>` : ""
+          }${
+            wp.folderId && folderNameById.has(wp.folderId) ? ` <small style="color:var(--accent-bright);">📁 ${escHtml(folderNameById.get(wp.folderId))}</small>` : ""
+          }</div>
           <small>${new Date(wp.createdAt).toLocaleDateString()}</small>
         </div>
         <div>
@@ -1956,6 +2128,10 @@ async function openTrailsPanel() {
       <button class="pill-btn danger" id="clear-breadcrumb-btn">Clear</button>
     </div>
     ${breadcrumbRows}
+    <div class="region-item">
+      <div><div>Trip Folders</div><small>Group your own trails/waypoints into a trip — stays on this device</small></div>
+      <button class="pill-btn" id="open-personal-folders-btn">Manage</button>
+    </div>
     ${
       trails.length + waypoints.length > 0
         ? `<input type="search" id="content-search" placeholder="Search trails & waypoints…" style="margin-top:12px;" />`
@@ -1976,6 +2152,7 @@ async function openTrailsPanel() {
       });
     });
   }
+  document.getElementById("open-personal-folders-btn").addEventListener("click", openPersonalFoldersPanel);
   document.getElementById("import-gpx-btn").addEventListener("click", () => {
     document.getElementById("import-gpx-input").click();
   });
@@ -2103,7 +2280,7 @@ async function openTrailsPanel() {
         const wp = await WaypointStore.getWaypoint(id);
         const name = prompt("Rename waypoint:", wp.name);
         if (name === null || !name.trim()) return;
-        await WaypointStore.updateWaypoint(id, { name: name.trim(), note: wp.note, category: wp.category });
+        await WaypointStore.updateWaypoint(id, { name: name.trim(), note: wp.note, category: wp.category, severity: wp.severity });
         await refreshWaypointMarkers();
         openTrailsPanel();
         if (wp.remoteId && session) GroupBackend.upsertPersonalWaypoint({ ...wp, name: name.trim() }).catch(() => {});
@@ -2117,6 +2294,141 @@ async function openTrailsPanel() {
       }
     });
   });
+}
+
+// ---------- Personal trip folders (local-only grouping of My Content) ----------
+// Mirrors the shared/crew trip-folders UI (openFoldersPanel/
+// openFolderDetailPanel below) but backed by TripFolderStore — local
+// IndexedDB, never synced, since this is purely an on-device organizing
+// tool rather than data worth backing up.
+async function openPersonalFoldersPanel() {
+  const folders = await TripFolderStore.listFolders();
+  const [trails, waypoints] = await Promise.all([TrailStore.listTrails(), WaypointStore.listWaypoints()]);
+  const countInFolder = (id) => trails.filter((t) => t.folderId === id).length + waypoints.filter((w) => w.folderId === id).length;
+
+  const rows = folders
+    .map(
+      (f) => `<div class="region-item" data-id="${f.id}">
+        <div><div>${escHtml(f.name)}</div><small>${countInFolder(f.id)} item${countInFolder(f.id) === 1 ? "" : "s"}</small></div>
+        <button class="pill-btn" data-action="open">Open</button>
+      </div>`
+    )
+    .join("");
+
+  openPanel(
+    "Trip Folders",
+    `
+    ${rows || '<p style="color:var(--text-dim);font-size:13px;">No trip folders yet.</p>'}
+    <label>New folder name</label>
+    <input id="new-personal-folder-name" placeholder="e.g. Windrock weekend" />
+    <button class="primary" id="create-personal-folder-btn">Create Folder</button>
+    <button class="primary" id="back-to-content-btn" style="background:var(--panel);border:1px solid var(--border);margin-top:12px;">Back</button>
+    `
+  );
+  panelBody.querySelectorAll('.region-item button[data-action="open"]').forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = Number(btn.closest(".region-item").dataset.id);
+      const folder = folders.find((f) => f.id === id);
+      openPersonalFolderDetailPanel(folder);
+    });
+  });
+  document.getElementById("create-personal-folder-btn").addEventListener("click", async () => {
+    const name = document.getElementById("new-personal-folder-name").value.trim();
+    if (!name) return;
+    await TripFolderStore.createFolder(name);
+    openPersonalFoldersPanel();
+  });
+  document.getElementById("back-to-content-btn").addEventListener("click", openTrailsPanel);
+}
+
+async function openPersonalFolderDetailPanel(folder) {
+  const [trails, waypoints] = await Promise.all([TrailStore.listTrails(), WaypointStore.listWaypoints()]);
+  const inFolder = { trails: trails.filter((t) => t.folderId === folder.id), waypoints: waypoints.filter((w) => w.folderId === folder.id) };
+  const unassigned = { trails: trails.filter((t) => !t.folderId), waypoints: waypoints.filter((w) => !w.folderId) };
+
+  const trailRows = inFolder.trails
+    .map(
+      (t) => `<div class="trail-item" data-remove-trail="${t.id}">
+        <div>🛣️ ${escHtml(t.name)} <small style="color:var(--text-dim);">${metersToMiles(t.distanceMeters).toFixed(1)} mi</small></div>
+        <button class="pill-btn" data-action="remove">Remove</button>
+      </div>`
+    )
+    .join("");
+  const wpRows = inFolder.waypoints
+    .map(
+      (w) => `<div class="trail-item" data-remove-wp="${w.id}">
+        <div>📍 ${escHtml(w.name)}</div>
+        <button class="pill-btn" data-action="remove">Remove</button>
+      </div>`
+    )
+    .join("");
+
+  openPanel(
+    escHtml(folder.name),
+    `
+    <h4 style="margin-bottom:4px;">Trails / Routes</h4>
+    ${trailRows || '<p style="color:var(--text-dim);font-size:12px;">None yet.</p>'}
+    ${
+      unassigned.trails.length
+        ? `<select id="add-personal-trail-select" style="width:100%;margin-top:6px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);">
+      <option value="">Add an existing trail...</option>
+      ${unassigned.trails.map((t) => `<option value="${t.id}">${escHtml(t.name)}</option>`).join("")}
+    </select>`
+        : ""
+    }
+    <h4 style="margin-bottom:4px;margin-top:14px;">Waypoints</h4>
+    ${wpRows || '<p style="color:var(--text-dim);font-size:12px;">None yet.</p>'}
+    ${
+      unassigned.waypoints.length
+        ? `<select id="add-personal-wp-select" style="width:100%;margin-top:6px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);">
+      <option value="">Add an existing waypoint...</option>
+      ${unassigned.waypoints.map((w) => `<option value="${w.id}">${escHtml(w.name)}</option>`).join("")}
+    </select>`
+        : ""
+    }
+    <label style="margin-top:16px;">Rename folder</label>
+    <input id="rename-personal-folder-name" value="${escHtml(folder.name)}" />
+    <button class="primary" id="rename-personal-folder-btn" style="background:var(--panel);border:1px solid var(--border);">Rename</button>
+    <button class="primary" id="delete-personal-folder-btn" style="background:var(--danger);border:none;margin-top:8px;">Delete Folder</button>
+    <button class="primary" id="back-to-personal-folders-btn" style="background:var(--panel);border:1px solid var(--border);margin-top:8px;">Back to Folders</button>
+    `
+  );
+  document.getElementById("add-personal-trail-select")?.addEventListener("change", async (e) => {
+    if (!e.target.value) return;
+    await TrailStore.assignFolder(Number(e.target.value), folder.id);
+    openPersonalFolderDetailPanel(folder);
+  });
+  document.getElementById("add-personal-wp-select")?.addEventListener("change", async (e) => {
+    if (!e.target.value) return;
+    await WaypointStore.assignFolder(Number(e.target.value), folder.id);
+    openPersonalFolderDetailPanel(folder);
+  });
+  panelBody.querySelectorAll('[data-remove-trail] button[data-action="remove"]').forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = Number(btn.closest("[data-remove-trail]").dataset.removeTrail);
+      await TrailStore.assignFolder(id, null);
+      openPersonalFolderDetailPanel(folder);
+    });
+  });
+  panelBody.querySelectorAll('[data-remove-wp] button[data-action="remove"]').forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = Number(btn.closest("[data-remove-wp]").dataset.removeWp);
+      await WaypointStore.assignFolder(id, null);
+      openPersonalFolderDetailPanel(folder);
+    });
+  });
+  document.getElementById("rename-personal-folder-btn").addEventListener("click", async () => {
+    const name = document.getElementById("rename-personal-folder-name").value.trim();
+    if (!name) return;
+    await TripFolderStore.renameFolder(folder.id, name);
+    openPersonalFolderDetailPanel({ ...folder, name });
+  });
+  document.getElementById("delete-personal-folder-btn").addEventListener("click", async () => {
+    if (!confirm(`Delete "${folder.name}"? Trails and waypoints inside stay put, just un-grouped.`)) return;
+    await TripFolderStore.deleteFolder(folder.id);
+    openPersonalFoldersPanel();
+  });
+  document.getElementById("back-to-personal-folders-btn").addEventListener("click", openPersonalFoldersPanel);
 }
 
 // GPX 1.1 — the standard format for GPS tracks, readable by basically
@@ -2255,6 +2567,7 @@ async function importGpxFile(file) {
       difficulty: null,
     });
     if (firstImportedId === null) firstImportedId = id;
+    backfillAndSaveTrailElevation(id);
   }
   for (const wpt of waypoints) {
     await WaypointStore.saveWaypoint({ name: wpt.name, lat: wpt.lat, lng: wpt.lng, note: wpt.note, category: "other" });
@@ -2301,10 +2614,64 @@ function showUndoToast(message, onUndo) {
   undoToastTimeout = setTimeout(() => toast.classList.add("hidden"), 6000);
 }
 
+// Grade tiers roughly follow common trail-difficulty signage (a paved
+// road rarely exceeds ~8%; technical 4x4 trails routinely hit 15-30%+),
+// so the color alone should read as "easy -> gnarly" without a legend.
+function gradeColor(gradePct) {
+  const g = Math.abs(gradePct);
+  if (g < 8) return "#22c55e";
+  if (g < 15) return "#eab308";
+  if (g < 25) return "#f97316";
+  return "#dc2626";
+}
+
+// One LineString feature per segment, colored by that segment's grade —
+// MapLibre's line-gradient only interpolates smoothly along a line's own
+// length, not against an independent data channel like grade, so
+// per-segment features + data-driven line-color is the straightforward
+// way to get "redder where it's steeper". Falls back to a single solid
+// line when there isn't enough elevation data to compute grade (imported/
+// planned trails, or a device that never reported GPS altitude).
+function trailLineGeojson(trail) {
+  const points = trail.points;
+  if (!trailHasElevation(trail)) {
+    return {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: { color: "#facc15" },
+          geometry: { type: "LineString", coordinates: points.map((p) => [p.lng, p.lat]) },
+        },
+      ],
+    };
+  }
+  const features = [];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (typeof a.ele !== "number" || typeof b.ele !== "number") continue; // no grade without both endpoints' elevation
+    const runFt = metersToFeet(elevHaversineMeters(a, b));
+    const riseFt = metersToFeet(b.ele - a.ele);
+    const gradePct = runFt > 3 ? (riseFt / runFt) * 100 : 0; // ignore near-zero run — noise, not a real grade
+    features.push({
+      type: "Feature",
+      properties: { color: gradeColor(gradePct) },
+      geometry: {
+        type: "LineString",
+        coordinates: [
+          [a.lng, a.lat],
+          [b.lng, b.lat],
+        ],
+      },
+    });
+  }
+  return { type: "FeatureCollection", features };
+}
+
 function showTrailOnMap(trail) {
   const sourceId = `saved-trail-${trail.id}`;
-  const coords = trail.points.map((p) => [p.lng, p.lat]);
-  const geojson = { type: "Feature", geometry: { type: "LineString", coordinates: coords } };
+  const geojson = trailLineGeojson(trail);
 
   if (map.getSource(sourceId)) {
     map.getSource(sourceId).setData(geojson);
@@ -2315,10 +2682,11 @@ function showTrailOnMap(trail) {
       type: "line",
       source: sourceId,
       layout: { "line-join": "round", "line-cap": "round" },
-      paint: { "line-color": "#facc15", "line-width": 4 },
+      paint: { "line-color": ["get", "color"], "line-width": 4 },
     });
   }
 
+  const coords = trail.points.map((p) => [p.lng, p.lat]);
   const bounds = coords.reduce(
     (b, c) => b.extend(c),
     new maplibregl.LngLatBounds(coords[0], coords[0])

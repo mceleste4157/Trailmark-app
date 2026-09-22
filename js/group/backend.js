@@ -112,7 +112,7 @@ const GroupBackend = (() => {
 
   // ---------- Shared waypoints ----------
   // category: 'trailhead' | 'campsite' | 'fuel' | 'water_crossing' | 'obstacle' | 'hazard' | 'other'
-  async function addWaypoint({ name, note, lat, lng, category, folderId, photoFile }) {
+  async function addWaypoint({ name, note, lat, lng, category, severity, folderId, photoFile }) {
     const uid = await currentUserId();
     let photo_path = null;
     if (photoFile) photo_path = await uploadPhoto(photoFile);
@@ -125,6 +125,7 @@ const GroupBackend = (() => {
         lat,
         lng,
         category: category || "other",
+        severity: severity || null,
         folder_id: folderId || null,
         photo_path,
       })
@@ -384,6 +385,7 @@ const GroupBackend = (() => {
       lng: wp.lng,
       note: wp.note || "",
       category: wp.category || "other",
+      severity: wp.severity || null,
       created_at: wp.createdAt,
     };
     if (wp.remoteId) row.id = wp.remoteId;
