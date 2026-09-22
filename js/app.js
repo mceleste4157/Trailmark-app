@@ -1896,7 +1896,7 @@ async function openTrailsPanel() {
   const rows = trails
     .map(
       (t) => `
-      <div class="trail-item" data-id="${t.id}">
+      <div class="trail-item" data-id="${t.id}" data-search="${escHtml(t.name.toLowerCase())}">
         <div>
           <div>${escHtml(t.name)} <small style="color:var(--text-dim);">${t.kind === "planned" ? "(planned)" : t.kind === "imported" ? "(imported)" : "(recorded)"}</small></div>
           <small>${metersToMiles(t.distanceMeters).toFixed(2)} mi · ${difficultyLabel(t.difficulty)} · ${new Date(t.createdAt).toLocaleDateString()}</small>
@@ -1916,13 +1916,15 @@ async function openTrailsPanel() {
   const waypointRows = waypoints
     .map(
       (wp) => `
-      <div class="trail-item" data-wp-id="${wp.id}">
+      <div class="trail-item" data-wp-id="${wp.id}" data-search="${escHtml(wp.name.toLowerCase())}">
         <div>
           <div>${escHtml(wp.name)} <small style="color:var(--text-dim);">(${CATEGORY_LABELS[wp.category] || "Other"})</small></div>
           <small>${new Date(wp.createdAt).toLocaleDateString()}</small>
         </div>
         <div>
           <button class="pill-btn" data-action="show">Show</button>
+          <button class="pill-btn" data-action="rename">Rename</button>
+          <button class="pill-btn" data-action="export">GPX</button>
           <button class="pill-btn danger" data-action="delete">Delete</button>
         </div>
       </div>`
@@ -1942,12 +1944,26 @@ async function openTrailsPanel() {
       <button class="pill-btn danger" id="clear-breadcrumb-btn">Clear</button>
     </div>
     ${breadcrumbRows}
+    ${
+      trails.length + waypoints.length > 0
+        ? `<input type="search" id="content-search" placeholder="Search trails & waypoints…" style="margin-top:12px;" />`
+        : ""
+    }
     <h4 style="margin-bottom:4px;margin-top:14px;">Trails &amp; Routes</h4>
-    ${rows || "<p>No saved trails yet. Tap Go to track one.</p>"}
+    <div id="trail-rows">${rows || "<p>No saved trails yet. Tap Go to track one.</p>"}</div>
     <h4 style="margin-bottom:4px;margin-top:14px;">Waypoints</h4>
-    ${waypointRows || "<p>No waypoints dropped yet.</p>"}
+    <div id="waypoint-rows">${waypointRows || "<p>No waypoints dropped yet.</p>"}</div>
     `
   );
+  const contentSearch = document.getElementById("content-search");
+  if (contentSearch) {
+    contentSearch.addEventListener("input", () => {
+      const q = contentSearch.value.trim().toLowerCase();
+      panelBody.querySelectorAll(".trail-item[data-search]").forEach((el) => {
+        el.style.display = !q || el.dataset.search.includes(q) ? "" : "none";
+      });
+    });
+  }
   document.getElementById("import-gpx-btn").addEventListener("click", () => {
     document.getElementById("import-gpx-input").click();
   });
@@ -1997,9 +2013,13 @@ async function openTrailsPanel() {
       const action = e.target.dataset.action;
       if (action === "delete") {
         const trail = await TrailStore.getTrail(id);
-        if (!confirm(`Delete "${trail.name}"? This can't be undone.`)) return;
+        if (!confirm(`Delete "${trail.name}"?`)) return;
         await TrailStore.deleteTrail(id);
         openTrailsPanel();
+        showUndoToast(`Deleted "${trail.name}"`, async () => {
+          await TrailStore.restoreTrail(trail);
+          openTrailsPanel();
+        });
       } else if (action === "rename") {
         const trail = await TrailStore.getTrail(id);
         const name = prompt("Rename trail:", trail.name);
@@ -2045,9 +2065,26 @@ async function openTrailsPanel() {
       const id = Number(e.target.closest(".trail-item").dataset.wpId);
       const action = e.target.dataset.action;
       if (action === "delete") {
+        const wp = await WaypointStore.getWaypoint(id);
+        if (!confirm(`Delete "${wp.name}"?`)) return;
         await WaypointStore.deleteWaypoint(id);
         await refreshWaypointMarkers();
         openTrailsPanel();
+        showUndoToast(`Deleted "${wp.name}"`, async () => {
+          await WaypointStore.restoreWaypoint(wp);
+          await refreshWaypointMarkers();
+          openTrailsPanel();
+        });
+      } else if (action === "rename") {
+        const wp = await WaypointStore.getWaypoint(id);
+        const name = prompt("Rename waypoint:", wp.name);
+        if (name === null || !name.trim()) return;
+        await WaypointStore.updateWaypoint(id, { name: name.trim(), note: wp.note, category: wp.category });
+        await refreshWaypointMarkers();
+        openTrailsPanel();
+      } else if (action === "export") {
+        const wp = await WaypointStore.getWaypoint(id);
+        downloadFile(`${wp.name.replace(/[^a-z0-9]+/gi, "-")}.gpx`, waypointToGpx(wp), "application/gpx+xml");
       } else {
         const wp = await WaypointStore.getWaypoint(id);
         map.flyTo({ center: [wp.lng, wp.lat], zoom: 15 });
@@ -2076,6 +2113,17 @@ function trailToGpx(trail) {
 ${points}
     </trkseg>
   </trk>
+</gpx>
+`;
+}
+
+function waypointToGpx(wp) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Trailmark" xmlns="http://www.topografix.com/GPX/1/1">
+  <wpt lat="${wp.lat}" lon="${wp.lng}">
+    <name>${escHtml(wp.name)}</name>
+    ${wp.note ? `<desc>${escHtml(wp.note)}</desc>` : ""}
+  </wpt>
 </gpx>
 `;
 }
@@ -2163,7 +2211,14 @@ async function importGpxFile(file) {
   const baseName = file.name.replace(/\.gpx$/i, "");
   let firstImportedId = null;
   for (const [i, track] of tracks.entries()) {
-    const name = track.name || (tracks.length > 1 ? `${baseName} (${i + 1})` : baseName);
+    const rawName = track.name || (tracks.length > 1 ? `${baseName} (${i + 1})` : baseName);
+    // Some export tools (and a filename echoed straight from a corrupt
+    // source timestamp) can hand us a literal "Invalid Date" or empty
+    // string here — fall back rather than saving that as the trail's name.
+    const name =
+      rawName && rawName.trim() && rawName.trim().toLowerCase() !== "invalid date"
+        ? rawName.trim()
+        : `Imported trail – ${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
     const times = track.points.map((p) => p.t).filter((t) => typeof t === "number");
     const id = await TrailStore.saveTrail({
       name,
@@ -2196,6 +2251,28 @@ function downloadFile(filename, content, mime) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// A brief window to undo a delete after it's already committed to the DB —
+// the confirm() dialog guards against a stray tap, this catches "actually I
+// didn't mean that" a beat later. Only one toast at a time: a second delete
+// while one is showing replaces it rather than stacking, so the timeout and
+// button listener never point at a stale record.
+let undoToastTimeout = null;
+function showUndoToast(message, onUndo) {
+  clearTimeout(undoToastTimeout);
+  const toast = document.getElementById("undo-toast");
+  document.getElementById("undo-toast-msg").textContent = message;
+  toast.classList.remove("hidden");
+  const btn = document.getElementById("undo-toast-btn");
+  const freshBtn = btn.cloneNode(true); // drop the previous toast's listener
+  btn.replaceWith(freshBtn);
+  freshBtn.addEventListener("click", async () => {
+    clearTimeout(undoToastTimeout);
+    toast.classList.add("hidden");
+    await onUndo();
+  });
+  undoToastTimeout = setTimeout(() => toast.classList.add("hidden"), 6000);
 }
 
 function showTrailOnMap(trail) {

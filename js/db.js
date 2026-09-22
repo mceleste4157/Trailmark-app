@@ -89,6 +89,12 @@ const TrailStore = {
   async getTrail(id) {
     return db.trails.get(id);
   },
+  // Re-inserts a full trail record (including its original id) for the
+  // "Undo" toast right after a delete — a plain add() would hand it a new
+  // id and silently orphan anything that still referenced the old one.
+  async restoreTrail(trail) {
+    return db.trails.put(trail);
+  },
 };
 
 // trailhead | campsite | fuel | water_crossing | obstacle | hazard | other
@@ -119,6 +125,11 @@ const WaypointStore = {
   },
   async deleteWaypoint(id) {
     return db.waypoints.delete(id);
+  },
+  // Re-inserts a full waypoint record (including its original id) for the
+  // "Undo" toast right after a delete.
+  async restoreWaypoint(wp) {
+    return db.waypoints.put(wp);
   },
 };
 

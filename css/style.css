@@ -619,6 +619,37 @@ html, body {
   position: relative;
 }
 
+#undo-toast {
+  position: absolute;
+  z-index: 30;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+#undo-toast.hidden { display: none; }
+
+#undo-toast-btn {
+  background: none;
+  border: none;
+  color: var(--accent-bright);
+  font-weight: 700;
+  font-size: 13px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
 #elev-tooltip {
   position: absolute;
   top: 6px;
