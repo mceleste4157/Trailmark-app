@@ -2,10 +2,39 @@ package com.mceleste.trailmark
 
 import android.app.Activity
 import android.os.Bundle
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
 
 class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(android.R.layout.simple_list_item_1)
+
+        val email = EditText(this).apply { hint = "Email" }
+        val password = EditText(this).apply { hint = "Password"; inputType = 0x81 }
+        val status = TextView(this)
+        val button = Button(this).apply { text = "Sign In" }
+
+        button.setOnClickListener {
+            Thread {
+                val result = SupabaseAuth.signIn(this, email.text.toString().trim(), password.text.toString())
+                runOnUiThread {
+                    status.text = result.fold(
+                        onSuccess = { "Signed in. Connect Android Auto to use Trailmark navigation." },
+                        onFailure = { it.message ?: "Sign-in failed." }
+                    )
+                }
+            }.start()
+        }
+
+        setContentView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 64, 32, 32)
+            addView(email)
+            addView(password)
+            addView(button)
+            addView(status)
+        })
     }
 }
