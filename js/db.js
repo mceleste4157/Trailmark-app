@@ -74,6 +74,22 @@ db.version(6).stores({
   tripFolders: "++id, name, createdAt",
 });
 
+db.version(7).stores({
+  trails: "++id, name, createdAt",
+  waypoints: "++id, name, createdAt",
+  regions: null,
+  breadcrumbs: "++id, t",
+  customAreas: "++id, &name, downloadedAt",
+  photos: "++id, createdAt",
+  tripFolders: "++id, name, createdAt",
+  // Vehicle maintenance tracking — entirely private to the signed-in
+  // user (unlike trails/waypoints, there's no shared/crew variant of
+  // this at all). vehicleId indexed since "every record for this
+  // vehicle" is the main query. See VehicleStore/MaintenanceStore below.
+  vehicles: "++id, name, createdAt",
+  maintenanceRecords: "++id, vehicleId, createdAt",
+});
+
 const TrailStore = {
   async saveTrail({ name, kind, points, distanceMeters, startedAt, endedAt, difficulty }) {
     return db.trails.add({
@@ -258,5 +274,111 @@ const PhotoStore = {
   },
   async deletePhoto(id) {
     return db.photos.delete(id);
+  },
+};
+
+// ---------- Vehicle maintenance (private — no shared/crew variant) ----------
+const VehicleStore = {
+  async saveVehicle({ name, year, make, model, odometer }) {
+    return db.vehicles.add({
+      name,
+      year: year || null,
+      make: make || "",
+      model: model || "",
+      odometer: odometer || null,
+      createdAt: Date.now(),
+      remoteId: null, // set once pushed to personal_vehicles — see syncPersonalData() in js/app.js
+    });
+  },
+  async listVehicles() {
+    return db.vehicles.orderBy("createdAt").toArray();
+  },
+  async getVehicle(id) {
+    return db.vehicles.get(id);
+  },
+  async updateVehicle(id, { name, year, make, model, odometer }) {
+    return db.vehicles.update(id, { name, year: year || null, make: make || "", model: model || "", odometer: odometer || null });
+  },
+  // Cascades to every maintenance record for this vehicle — an orphaned
+  // record with no vehicle to belong to would just be dead weight, never
+  // shown anywhere.
+  async deleteVehicle(id) {
+    await db.maintenanceRecords.where("vehicleId").equals(id).delete();
+    return db.vehicles.delete(id);
+  },
+  async restoreVehicle(vehicle) {
+    return db.vehicles.put(vehicle);
+  },
+  async setRemoteId(id, remoteId) {
+    return db.vehicles.update(id, { remoteId });
+  },
+  async importSynced(vehicle) {
+    return db.vehicles.add(vehicle);
+  },
+};
+
+// oil_change | tire_rotation | brakes | fluids | battery | filters | inspection | repair | other
+const MAINTENANCE_TYPES = ["oil_change", "tire_rotation", "brakes", "fluids", "battery", "filters", "inspection", "repair", "other"];
+
+const MaintenanceStore = {
+  // receipt is a Blob/File (from a file input) or null — stored the same
+  // ArrayBuffer-not-Blob way as PhotoStore.savePhoto, for the same
+  // WebKit-compatibility reason (see the comment there).
+  async saveRecord({ vehicleId, type, date, miles, cost, note, receipt }) {
+    let receiptData = null;
+    let receiptType = null;
+    if (receipt) {
+      receiptData = await receipt.arrayBuffer();
+      receiptType = receipt.type;
+    }
+    return db.maintenanceRecords.add({
+      vehicleId,
+      type: type || "other",
+      date: date || Date.now(),
+      miles: typeof miles === "number" ? miles : null,
+      cost: typeof cost === "number" ? cost : null,
+      note: note || "",
+      receiptData,
+      receiptType,
+      createdAt: Date.now(),
+      remoteId: null, // set once pushed to personal_maintenance_records
+      receiptRemotePath: null, // set once the receipt's been uploaded to the private 'maintenance-receipts' bucket
+    });
+  },
+  async listRecordsForVehicle(vehicleId) {
+    const records = await db.maintenanceRecords.where("vehicleId").equals(vehicleId).toArray();
+    return records.sort((a, b) => b.date - a.date);
+  },
+  async listAllRecords() {
+    return db.maintenanceRecords.toArray();
+  },
+  async getRecord(id) {
+    return db.maintenanceRecords.get(id);
+  },
+  // Doesn't touch the receipt — replacing a receipt photo isn't
+  // supported in-place, delete and re-log the record for that.
+  async updateRecord(id, { type, date, miles, cost, note }) {
+    return db.maintenanceRecords.update(id, {
+      type: type || "other",
+      date,
+      miles: typeof miles === "number" ? miles : null,
+      cost: typeof cost === "number" ? cost : null,
+      note: note || "",
+    });
+  },
+  async deleteRecord(id) {
+    return db.maintenanceRecords.delete(id);
+  },
+  async restoreRecord(record) {
+    return db.maintenanceRecords.put(record);
+  },
+  async setRemoteId(id, remoteId) {
+    return db.maintenanceRecords.update(id, { remoteId });
+  },
+  async setReceiptRemotePath(id, receiptRemotePath) {
+    return db.maintenanceRecords.update(id, { receiptRemotePath });
+  },
+  async importSynced(record) {
+    return db.maintenanceRecords.add(record);
   },
 };

@@ -47,6 +47,14 @@ const GroupBackend = (() => {
       upsertPersonalWaypoint: disabled,
       listPersonalWaypoints: disabled,
       deletePersonalWaypoint: disabled,
+      upsertPersonalVehicle: disabled,
+      listPersonalVehicles: disabled,
+      deletePersonalVehicle: disabled,
+      uploadMaintenanceReceipt: disabled,
+      maintenanceReceiptUrl: disabled,
+      upsertPersonalMaintenanceRecord: disabled,
+      listPersonalMaintenanceRecords: disabled,
+      deletePersonalMaintenanceRecord: disabled,
     };
   }
 
@@ -405,6 +413,94 @@ const GroupBackend = (() => {
     if (error) throw error;
   }
 
+  // ---------- Vehicle maintenance (private — no shared/crew variant) ----------
+  async function upsertPersonalVehicle(vehicle) {
+    const uid = await currentUserId();
+    const row = {
+      user_id: uid,
+      name: vehicle.name,
+      year: vehicle.year,
+      make: vehicle.make || "",
+      model: vehicle.model || "",
+      odometer: vehicle.odometer,
+      created_at: vehicle.createdAt,
+    };
+    if (vehicle.remoteId) row.id = vehicle.remoteId;
+    const { data, error } = await client.from("personal_vehicles").upsert(row).select().single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function listPersonalVehicles() {
+    const { data, error } = await client.from("personal_vehicles").select("*");
+    if (error) throw error;
+    return data;
+  }
+
+  async function deletePersonalVehicle(remoteId) {
+    const { error } = await client.from("personal_vehicles").delete().eq("id", remoteId);
+    if (error) throw error;
+  }
+
+  // A private bucket, unlike uploadPhoto's trail-photos (any authenticated
+  // user can read that one) — see the storage.foldername RLS policies in
+  // sql/schema.sql. record.receiptData is an ArrayBuffer (see
+  // MaintenanceStore.saveRecord's comment on why it's not a Blob).
+  async function uploadMaintenanceReceipt(receiptData, receiptType) {
+    const uid = await currentUserId();
+    const ext = (receiptType || "image/jpeg").split("/").pop() || "jpg";
+    const path = `${uid}/${Date.now()}.${ext}`;
+    const blob = new Blob([receiptData], { type: receiptType || "image/jpeg" });
+    const { error } = await client.storage.from("maintenance-receipts").upload(path, blob);
+    if (error) throw error;
+    return path;
+  }
+
+  async function maintenanceReceiptUrl(path) {
+    const { data, error } = await client.storage.from("maintenance-receipts").createSignedUrl(path, 3600);
+    if (error) throw error;
+    return data.signedUrl;
+  }
+
+  // record is the local record (see MaintenanceStore) — its vehicleId is
+  // a local Dexie id, meaningless remotely, so the caller passes the
+  // vehicle's own already-synced remoteId separately. Uploads the
+  // receipt on first sync only (record.receiptRemotePath set after that,
+  // same remoteId pattern as everything else).
+  async function upsertPersonalMaintenanceRecord(record, vehicleRemoteId) {
+    const uid = await currentUserId();
+    let receipt_path = record.receiptRemotePath || null;
+    if (!receipt_path && record.receiptData) {
+      receipt_path = await uploadMaintenanceReceipt(record.receiptData, record.receiptType);
+    }
+    const row = {
+      user_id: uid,
+      vehicle_id: vehicleRemoteId,
+      type: record.type,
+      date: record.date,
+      miles: record.miles,
+      cost: record.cost,
+      note: record.note || "",
+      receipt_path,
+      created_at: record.createdAt,
+    };
+    if (record.remoteId) row.id = record.remoteId;
+    const { data, error } = await client.from("personal_maintenance_records").upsert(row).select().single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function listPersonalMaintenanceRecords() {
+    const { data, error } = await client.from("personal_maintenance_records").select("*");
+    if (error) throw error;
+    return data;
+  }
+
+  async function deletePersonalMaintenanceRecord(remoteId) {
+    const { error } = await client.from("personal_maintenance_records").delete().eq("id", remoteId);
+    if (error) throw error;
+  }
+
   return {
     enabled: true,
     onAuthChange,
@@ -440,5 +536,13 @@ const GroupBackend = (() => {
     upsertPersonalWaypoint,
     listPersonalWaypoints,
     deletePersonalWaypoint,
+    upsertPersonalVehicle,
+    listPersonalVehicles,
+    deletePersonalVehicle,
+    uploadMaintenanceReceipt,
+    maintenanceReceiptUrl,
+    upsertPersonalMaintenanceRecord,
+    listPersonalMaintenanceRecords,
+    deletePersonalMaintenanceRecord,
   };
 })();

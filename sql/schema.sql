@@ -347,6 +347,81 @@ create policy "users can delete their own personal waypoints"
   on personal_waypoints for delete
   using (auth.uid() = user_id);
 
+-- ---------- Vehicle maintenance (private — no shared/crew variant at all) ----------
+-- Unlike everything else above, there is no "shared_" counterpart to
+-- these two tables — vehicle/maintenance data is never visible to anyone
+-- but its owner, full stop. RLS restricts every operation to auth.uid()
+-- = user_id, same as the personal_* tables. date/created_at are epoch
+-- milliseconds, matching the client's Date.now() values (see the note on
+-- personal_trails above for why).
+create table if not exists personal_vehicles (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references profiles(id) on delete cascade,
+  name text not null,
+  year smallint,
+  make text default '',
+  model text default '',
+  odometer integer,
+  created_at bigint not null
+);
+
+alter table personal_vehicles enable row level security;
+
+drop policy if exists "users can read their own vehicles" on personal_vehicles;
+create policy "users can read their own vehicles"
+  on personal_vehicles for select
+  using (auth.uid() = user_id);
+
+drop policy if exists "users can insert their own vehicles" on personal_vehicles;
+create policy "users can insert their own vehicles"
+  on personal_vehicles for insert
+  with check (auth.uid() = user_id);
+
+drop policy if exists "users can update their own vehicles" on personal_vehicles;
+create policy "users can update their own vehicles"
+  on personal_vehicles for update
+  using (auth.uid() = user_id);
+
+drop policy if exists "users can delete their own vehicles" on personal_vehicles;
+create policy "users can delete their own vehicles"
+  on personal_vehicles for delete
+  using (auth.uid() = user_id);
+
+create table if not exists personal_maintenance_records (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references profiles(id) on delete cascade,
+  vehicle_id uuid not null references personal_vehicles(id) on delete cascade,
+  type text not null default 'other', -- oil_change | tire_rotation | brakes | fluids | battery | filters | inspection | repair | other (enforced client-side)
+  date bigint not null,
+  miles integer,
+  cost numeric(10, 2),
+  note text default '',
+  receipt_path text, -- path within the private 'maintenance-receipts' storage bucket, if any
+  created_at bigint not null
+);
+
+alter table personal_maintenance_records enable row level security;
+
+drop policy if exists "users can read their own maintenance records" on personal_maintenance_records;
+create policy "users can read their own maintenance records"
+  on personal_maintenance_records for select
+  using (auth.uid() = user_id);
+
+drop policy if exists "users can insert their own maintenance records" on personal_maintenance_records;
+create policy "users can insert their own maintenance records"
+  on personal_maintenance_records for insert
+  with check (auth.uid() = user_id);
+
+drop policy if exists "users can update their own maintenance records" on personal_maintenance_records;
+create policy "users can update their own maintenance records"
+  on personal_maintenance_records for update
+  using (auth.uid() = user_id);
+
+drop policy if exists "users can delete their own maintenance records" on personal_maintenance_records;
+create policy "users can delete their own maintenance records"
+  on personal_maintenance_records for delete
+  using (auth.uid() = user_id);
+
 -- ---------- Error reports ----------
 -- User-triggered ("tap to report") client error reports — a lightweight
 -- way to actually hear about bugs instead of relying on word-of-mouth.
@@ -449,3 +524,28 @@ drop policy if exists "authenticated users can upload trail photos" on storage.o
 create policy "authenticated users can upload trail photos"
   on storage.objects for insert
   with check (bucket_id = 'trail-photos' and auth.role() = 'authenticated');
+
+-- Maintenance receipts — a separate, genuinely private bucket (unlike
+-- trail-photos above, which any authenticated user can read). Objects
+-- are uploaded to `${uid}/...`, and storage.foldername(name)[1] is that
+-- first path segment, so this only ever matches the uploader's own
+-- folder — nobody else, even signed in, can read or write another
+-- user's receipts.
+insert into storage.buckets (id, name, public)
+values ('maintenance-receipts', 'maintenance-receipts', false)
+on conflict (id) do nothing;
+
+drop policy if exists "users can read their own maintenance receipts" on storage.objects;
+create policy "users can read their own maintenance receipts"
+  on storage.objects for select
+  using (bucket_id = 'maintenance-receipts' and auth.uid()::text = (storage.foldername(name))[1]);
+
+drop policy if exists "users can upload their own maintenance receipts" on storage.objects;
+create policy "users can upload their own maintenance receipts"
+  on storage.objects for insert
+  with check (bucket_id = 'maintenance-receipts' and auth.uid()::text = (storage.foldername(name))[1]);
+
+drop policy if exists "users can delete their own maintenance receipts" on storage.objects;
+create policy "users can delete their own maintenance receipts"
+  on storage.objects for delete
+  using (bucket_id = 'maintenance-receipts' and auth.uid()::text = (storage.foldername(name))[1]);

@@ -1175,6 +1175,9 @@ function openToolsPanel() {
       <button class="tools-grid-btn" id="tools-route-btn" title="Lay out a route ahead of time by tapping points on the map">
         <span class="tools-grid-icon">🛣️</span><span>Plan Route</span>
       </button>
+      <button class="tools-grid-btn" id="tools-vehicles-btn" title="Track vehicles, maintenance, and receipts — private to you">
+        <span class="tools-grid-icon">🔧</span><span>Vehicles</span>
+      </button>
     </div>
     `
   );
@@ -1184,6 +1187,7 @@ function openToolsPanel() {
     document.getElementById("photo-input").click();
   });
   document.getElementById("tools-waypoint-btn").addEventListener("click", openWaypointPanel);
+  document.getElementById("tools-vehicles-btn").addEventListener("click", openVehiclesPanel);
   document.getElementById("tools-route-btn").addEventListener("click", () => {
     if (GpsRecorder.isRecording()) {
       alert("You're already tracking a ride. Use the Stop & Save button on the map first.");
@@ -2431,6 +2435,294 @@ async function openPersonalFolderDetailPanel(folder) {
   document.getElementById("back-to-personal-folders-btn").addEventListener("click", openPersonalFoldersPanel);
 }
 
+// ---------- Vehicle maintenance (private — no shared/crew variant) ----------
+const MAINTENANCE_TYPE_LABELS = {
+  oil_change: "Oil Change",
+  tire_rotation: "Tire Rotation",
+  brakes: "Brakes",
+  fluids: "Fluids",
+  battery: "Battery",
+  filters: "Filters",
+  inspection: "Inspection",
+  repair: "Repair",
+  other: "Other",
+};
+
+function maintenanceTypeOptionsHtml(selected) {
+  return MAINTENANCE_TYPES.map((t) => `<option value="${t}" ${t === selected ? "selected" : ""}>${MAINTENANCE_TYPE_LABELS[t]}</option>`).join("");
+}
+
+function vehicleLabel(v) {
+  const ymm = [v.year, v.make, v.model].filter(Boolean).join(" ");
+  return ymm ? `${v.name} (${ymm})` : v.name;
+}
+
+// Reconstructs a Blob from a maintenance record's locally-stored receipt
+// bytes — same ArrayBuffer-not-Blob pattern as PhotoStore, see its
+// comment for why. Returns null if this record has no local receipt
+// (either never had one, or it was pulled from another device and only
+// exists in the private storage bucket — see openMaintenanceRecordPanel
+// for fetching that case).
+function localReceiptBlob(record) {
+  if (!record.receiptData) return null;
+  return new Blob([record.receiptData], { type: record.receiptType || "image/jpeg" });
+}
+
+async function openVehiclesPanel() {
+  const vehicles = await VehicleStore.listVehicles();
+  const counts = {};
+  for (const v of vehicles) counts[v.id] = (await MaintenanceStore.listRecordsForVehicle(v.id)).length;
+
+  const rows = vehicles
+    .map(
+      (v) => `<div class="region-item" data-id="${v.id}">
+        <div><div>${escHtml(v.name)}</div><small>${escHtml([v.year, v.make, v.model].filter(Boolean).join(" ")) || "&nbsp;"}${
+          v.odometer ? ` · ${v.odometer.toLocaleString()} mi` : ""
+        } · ${counts[v.id]} record${counts[v.id] === 1 ? "" : "s"}</small></div>
+        <button class="pill-btn" data-action="open">Open</button>
+      </div>`
+    )
+    .join("");
+
+  openPanel(
+    "Vehicles",
+    `
+    <p style="color:var(--text-dim);font-size:13px;">Private to you — vehicles, maintenance history, and receipts, never shared with the crew.</p>
+    ${rows || '<p style="color:var(--text-dim);font-size:13px;">No vehicles yet.</p>'}
+    <button class="primary" id="add-vehicle-btn">Add Vehicle</button>
+    `
+  );
+  panelBody.querySelectorAll('.region-item button[data-action="open"]').forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = Number(btn.closest(".region-item").dataset.id);
+      openVehicleDetailPanel(await VehicleStore.getVehicle(id));
+    });
+  });
+  document.getElementById("add-vehicle-btn").addEventListener("click", () => openVehicleFormPanel(null));
+}
+
+// existingVehicle: null to add, or a vehicle record to edit.
+function openVehicleFormPanel(existingVehicle) {
+  const v = existingVehicle || { name: "", year: "", make: "", model: "", odometer: "" };
+  openPanel(
+    existingVehicle ? "Edit Vehicle" : "Add Vehicle",
+    `
+    <label>Name</label>
+    <input id="veh-name" placeholder="e.g. The Wrangler" value="${escHtml(v.name)}" />
+    <label>Year</label>
+    <input id="veh-year" type="number" placeholder="e.g. 2018" value="${v.year || ""}" />
+    <label>Make</label>
+    <input id="veh-make" placeholder="e.g. Jeep" value="${escHtml(v.make || "")}" />
+    <label>Model</label>
+    <input id="veh-model" placeholder="e.g. Wrangler Rubicon" value="${escHtml(v.model || "")}" />
+    <label>Current odometer (mi, optional)</label>
+    <input id="veh-odometer" type="number" placeholder="e.g. 62000" value="${v.odometer || ""}" />
+    <button class="primary" id="veh-save-btn">${existingVehicle ? "Save Changes" : "Add Vehicle"}</button>
+    `
+  );
+  document.getElementById("veh-save-btn").addEventListener("click", async () => {
+    const name = document.getElementById("veh-name").value.trim();
+    if (!name) {
+      alert("Give this vehicle a name.");
+      return;
+    }
+    const year = parseInt(document.getElementById("veh-year").value, 10) || null;
+    const make = document.getElementById("veh-make").value.trim();
+    const model = document.getElementById("veh-model").value.trim();
+    const odometer = parseInt(document.getElementById("veh-odometer").value, 10) || null;
+    if (existingVehicle) {
+      await VehicleStore.updateVehicle(existingVehicle.id, { name, year, make, model, odometer });
+      const updated = await VehicleStore.getVehicle(existingVehicle.id);
+      if (updated.remoteId && session) GroupBackend.upsertPersonalVehicle(updated).catch(() => {});
+      openVehicleDetailPanel(updated);
+    } else {
+      await VehicleStore.saveVehicle({ name, year, make, model, odometer });
+      syncPersonalData().catch(() => {});
+      openVehiclesPanel();
+    }
+  });
+}
+
+async function openVehicleDetailPanel(vehicle) {
+  const records = await MaintenanceStore.listRecordsForVehicle(vehicle.id);
+  const rows = records
+    .map(
+      (r) => `<div class="trail-item" data-id="${r.id}">
+        <div>
+          <div>${MAINTENANCE_TYPE_LABELS[r.type] || "Other"}${r.receiptData || r.receiptRemotePath ? " 🧾" : ""}</div>
+          <small>${new Date(r.date).toLocaleDateString()}${typeof r.miles === "number" ? ` · ${r.miles.toLocaleString()} mi` : ""}${
+            typeof r.cost === "number" ? ` · $${r.cost.toFixed(2)}` : ""
+          }${r.note ? ` · ${escHtml(r.note)}` : ""}</small>
+        </div>
+        <div>
+          <button class="pill-btn" data-action="view">View</button>
+          <button class="pill-btn danger" data-action="delete">Delete</button>
+        </div>
+      </div>`
+    )
+    .join("");
+
+  openPanel(
+    vehicleLabel(vehicle),
+    `
+    <div class="region-item">
+      <div><div>Odometer</div><small>${vehicle.odometer ? `${vehicle.odometer.toLocaleString()} mi` : "Not set"}</small></div>
+      <button class="pill-btn" id="edit-vehicle-btn">Edit</button>
+    </div>
+    <button class="primary" id="log-maintenance-btn" style="margin-top:12px;">Log Maintenance</button>
+    <h4 style="margin-bottom:4px;margin-top:14px;">History</h4>
+    ${rows || '<p style="color:var(--text-dim);font-size:13px;">No maintenance logged yet.</p>'}
+    <button class="primary" id="delete-vehicle-btn" style="background:var(--danger);border:none;margin-top:16px;">Delete Vehicle</button>
+    <button class="primary" id="back-to-vehicles-btn" style="background:var(--panel);border:1px solid var(--border);margin-top:8px;">Back to Vehicles</button>
+    `
+  );
+  document.getElementById("edit-vehicle-btn").addEventListener("click", () => openVehicleFormPanel(vehicle));
+  document.getElementById("log-maintenance-btn").addEventListener("click", () => openMaintenanceRecordFormPanel(vehicle, null));
+  document.getElementById("back-to-vehicles-btn").addEventListener("click", openVehiclesPanel);
+  document.getElementById("delete-vehicle-btn").addEventListener("click", async () => {
+    if (!confirm(`Delete "${vehicle.name}" and its entire maintenance history? This can't be undone.`)) return;
+    if (vehicle.remoteId && session) GroupBackend.deletePersonalVehicle(vehicle.remoteId).catch(() => {});
+    await VehicleStore.deleteVehicle(vehicle.id);
+    openVehiclesPanel();
+  });
+  panelBody.querySelectorAll('.trail-item[data-id] button').forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      const id = Number(btn.closest(".trail-item").dataset.id);
+      const record = await MaintenanceStore.getRecord(id);
+      if (e.target.dataset.action === "delete") {
+        if (!confirm(`Delete this ${MAINTENANCE_TYPE_LABELS[record.type] || "Other"} record?`)) return;
+        await MaintenanceStore.deleteRecord(id);
+        openVehicleDetailPanel(vehicle);
+        if (record.remoteId && session) GroupBackend.deletePersonalMaintenanceRecord(record.remoteId).catch(() => {});
+        showUndoToast(`Deleted ${MAINTENANCE_TYPE_LABELS[record.type] || "Other"} record`, async () => {
+          await MaintenanceStore.restoreRecord(record);
+          openVehicleDetailPanel(vehicle);
+          if (record.remoteId && session) {
+            const v = await VehicleStore.getVehicle(vehicle.id);
+            if (v.remoteId) GroupBackend.upsertPersonalMaintenanceRecord(record, v.remoteId).catch(() => {});
+          }
+        });
+      } else {
+        openMaintenanceRecordPanel(vehicle, record);
+      }
+    });
+  });
+}
+
+// existingRecord: null to add, or a record to edit (receipt itself isn't
+// editable in place — see MaintenanceStore.updateRecord's comment).
+function openMaintenanceRecordFormPanel(vehicle, existingRecord) {
+  const r = existingRecord || { type: "other", date: Date.now(), miles: "", cost: "", note: "" };
+  // Local date components, not toISOString() (which is UTC and can show
+  // the wrong calendar day in the evening in US timezones).
+  const rDate = new Date(r.date);
+  const dateStr = `${rDate.getFullYear()}-${String(rDate.getMonth() + 1).padStart(2, "0")}-${String(rDate.getDate()).padStart(2, "0")}`;
+  openPanel(
+    existingRecord ? "Edit Maintenance" : "Log Maintenance",
+    `
+    <label>Type</label>
+    <select id="maint-type" style="width:100%;margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);">
+      ${maintenanceTypeOptionsHtml(r.type)}
+    </select>
+    <label>Date</label>
+    <input id="maint-date" type="date" value="${dateStr}" />
+    <label>Odometer (mi, optional)</label>
+    <input id="maint-miles" type="number" placeholder="e.g. 62000" value="${r.miles || ""}" />
+    <label>Cost (optional)</label>
+    <input id="maint-cost" type="number" step="0.01" placeholder="e.g. 89.99" value="${r.cost || ""}" />
+    <label>Note (optional)</label>
+    <textarea id="maint-note" rows="2" placeholder="Synthetic 5W-30, rotated tires too...">${escHtml(r.note || "")}</textarea>
+    ${
+      existingRecord
+        ? ""
+        : `<label>Receipt photo (optional)</label>
+           <input type="file" id="maint-receipt" accept="image/*" capture="environment" />`
+    }
+    <button class="primary" id="maint-save-btn">${existingRecord ? "Save Changes" : "Save Record"}</button>
+    `
+  );
+  document.getElementById("maint-save-btn").addEventListener("click", async () => {
+    const type = document.getElementById("maint-type").value;
+    const dateVal = document.getElementById("maint-date").value;
+    const date = dateVal ? new Date(dateVal + "T12:00:00").getTime() : Date.now();
+    const miles = parseInt(document.getElementById("maint-miles").value, 10);
+    const cost = parseFloat(document.getElementById("maint-cost").value);
+    const note = document.getElementById("maint-note").value.trim();
+    if (existingRecord) {
+      await MaintenanceStore.updateRecord(existingRecord.id, {
+        type,
+        date,
+        miles: isFinite(miles) ? miles : null,
+        cost: isFinite(cost) ? cost : null,
+        note,
+      });
+      const updated = await MaintenanceStore.getRecord(existingRecord.id);
+      if (updated.remoteId && session) {
+        const v = await VehicleStore.getVehicle(vehicle.id);
+        if (v.remoteId) GroupBackend.upsertPersonalMaintenanceRecord(updated, v.remoteId).catch(() => {});
+      }
+    } else {
+      const receiptInput = document.getElementById("maint-receipt");
+      const receipt = receiptInput && receiptInput.files[0] ? receiptInput.files[0] : null;
+      await MaintenanceStore.saveRecord({
+        vehicleId: vehicle.id,
+        type,
+        date,
+        miles: isFinite(miles) ? miles : null,
+        cost: isFinite(cost) ? cost : null,
+        note,
+        receipt,
+      });
+      // Logging a service is the most common moment you'd actually know
+      // the current mileage — keep the vehicle's odometer in step rather
+      // than making that a separate manual edit.
+      if (isFinite(miles) && miles > (vehicle.odometer || 0)) {
+        await VehicleStore.updateVehicle(vehicle.id, { ...vehicle, odometer: miles });
+        vehicle = await VehicleStore.getVehicle(vehicle.id);
+      }
+      syncPersonalData().catch(() => {});
+    }
+    openVehicleDetailPanel(vehicle);
+  });
+}
+
+async function openMaintenanceRecordPanel(vehicle, record) {
+  let receiptUrl = null;
+  const localBlob = localReceiptBlob(record);
+  if (localBlob) {
+    receiptUrl = URL.createObjectURL(localBlob);
+  } else if (record.receiptRemotePath && GroupBackend.enabled && session) {
+    try {
+      receiptUrl = await GroupBackend.maintenanceReceiptUrl(record.receiptRemotePath);
+    } catch (err) {
+      console.warn("Could not load receipt:", err.message);
+    }
+  }
+
+  openPanel(
+    `${MAINTENANCE_TYPE_LABELS[record.type] || "Other"} — ${vehicleLabel(vehicle)}`,
+    `
+    <p style="color:var(--text-dim);font-size:13px;">
+      ${new Date(record.date).toLocaleDateString()}${typeof record.miles === "number" ? ` · ${record.miles.toLocaleString()} mi` : ""}${
+        typeof record.cost === "number" ? ` · $${record.cost.toFixed(2)}` : ""
+      }
+    </p>
+    ${record.note ? `<p>${escHtml(record.note)}</p>` : ""}
+    ${
+      receiptUrl
+        ? `<img src="${receiptUrl}" alt="Receipt" style="width:100%;border-radius:8px;display:block;margin-top:8px;" />`
+        : record.receiptRemotePath || record.receiptData
+        ? '<p style="color:var(--text-dim);font-size:13px;">Couldn\'t load the receipt photo.</p>'
+        : ""
+    }
+    <button class="primary" id="edit-maint-btn" style="margin-top:12px;">Edit</button>
+    <button class="primary" id="back-to-vehicle-btn" style="background:var(--panel);border:1px solid var(--border);margin-top:8px;">Back</button>
+    `
+  );
+  document.getElementById("edit-maint-btn").addEventListener("click", () => openMaintenanceRecordFormPanel(vehicle, record));
+  document.getElementById("back-to-vehicle-btn").addEventListener("click", () => openVehicleDetailPanel(vehicle));
+}
+
 // GPX 1.1 — the standard format for GPS tracks, readable by basically
 // every mapping/GPS tool (Garmin, Google Earth, CalTopo, onX's own
 // import, etc.), which is what makes "export where we went" useful.
@@ -2794,12 +3086,79 @@ async function syncPersonalData() {
           lng: r.lng,
           note: r.note,
           category: r.category,
+          severity: r.severity,
+          createdAt: r.created_at,
+        });
+      }
+
+      // Vehicles push first — maintenance records need their vehicle's
+      // remoteId (personal_maintenance_records.vehicle_id references
+      // personal_vehicles.id), so a record whose vehicle hasn't synced
+      // yet just waits for the next pass rather than erroring here.
+      const localVehicles = await VehicleStore.listVehicles();
+      for (const v of localVehicles) {
+        if (v.remoteId) continue;
+        const remote = await GroupBackend.upsertPersonalVehicle(v);
+        await VehicleStore.setRemoteId(v.id, remote.id);
+      }
+      const vehiclesAfterPush = await VehicleStore.listVehicles();
+      const vehicleRemoteIdByLocalId = new Map(vehiclesAfterPush.map((v) => [v.id, v.remoteId]));
+
+      const localRecords = await MaintenanceStore.listAllRecords();
+      for (const r of localRecords) {
+        if (r.remoteId) continue;
+        const vehicleRemoteId = vehicleRemoteIdByLocalId.get(r.vehicleId);
+        if (!vehicleRemoteId) continue; // this record's vehicle hasn't synced yet
+        const remote = await GroupBackend.upsertPersonalMaintenanceRecord(r, vehicleRemoteId);
+        await MaintenanceStore.setRemoteId(r.id, remote.id);
+        if (remote.receipt_path) await MaintenanceStore.setReceiptRemotePath(r.id, remote.receipt_path);
+      }
+
+      const knownVehicleRemoteIds = new Set(vehiclesAfterPush.map((v) => v.remoteId).filter(Boolean));
+      const remoteVehicles = await GroupBackend.listPersonalVehicles();
+      for (const r of remoteVehicles) {
+        if (knownVehicleRemoteIds.has(r.id)) continue;
+        await VehicleStore.importSynced({
+          remoteId: r.id,
+          name: r.name,
+          year: r.year,
+          make: r.make,
+          model: r.model,
+          odometer: r.odometer,
+          createdAt: r.created_at,
+        });
+      }
+
+      // Re-list after the pull above so a vehicle imported just now has a
+      // local id available for its own records to attach to below.
+      const vehiclesAfterPull = await VehicleStore.listVehicles();
+      const localVehicleIdByRemoteId = new Map(vehiclesAfterPull.filter((v) => v.remoteId).map((v) => [v.remoteId, v.id]));
+      const knownRecordRemoteIds = new Set((await MaintenanceStore.listAllRecords()).map((r) => r.remoteId).filter(Boolean));
+      const remoteRecords = await GroupBackend.listPersonalMaintenanceRecords();
+      for (const r of remoteRecords) {
+        if (knownRecordRemoteIds.has(r.id)) continue;
+        const localVehicleId = localVehicleIdByRemoteId.get(r.vehicle_id);
+        if (!localVehicleId) continue; // this record's vehicle isn't on this device (yet) — picked up next sync
+        await MaintenanceStore.importSynced({
+          remoteId: r.id,
+          vehicleId: localVehicleId,
+          type: r.type,
+          date: r.date,
+          miles: r.miles,
+          cost: r.cost,
+          note: r.note,
+          receiptData: null, // fetched on demand when actually viewed — see openMaintenanceRecordPanel
+          receiptType: null,
+          receiptRemotePath: r.receipt_path,
           createdAt: r.created_at,
         });
       }
 
       if (!panel.classList.contains("hidden") && document.getElementById("trail-rows")) {
         openTrailsPanel(); // refresh My Content if it's the panel currently open
+      }
+      if (!panel.classList.contains("hidden") && document.getElementById("vehicle-rows")) {
+        openVehiclesPanel(); // refresh the Vehicles list if it's open
       }
     } catch (err) {
       console.warn("Personal sync failed (will retry next time):", err.message);
