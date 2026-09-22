@@ -355,7 +355,7 @@ function loadBreadcrumbPrefs() {
     return {};
   }
 }
-let breadcrumbDayPrefs = loadBreadcrumbPrefs(); // { [dayKey]: { color?: string, hidden?: boolean } }
+let breadcrumbDayPrefs = loadBreadcrumbPrefs(); // { [dayKey]: { color?: string, hidden?: boolean, name?: string } }
 function saveBreadcrumbPrefs() {
   try {
     localStorage.setItem(BREADCRUMB_PREFS_KEY, JSON.stringify(breadcrumbDayPrefs));
@@ -377,6 +377,36 @@ function setBreadcrumbDayColor(dayKey, color) {
 function toggleBreadcrumbDayVisible(dayKey) {
   breadcrumbDayPrefs[dayKey] = { ...breadcrumbDayPrefs[dayKey], hidden: !breadcrumbDayPrefs[dayKey]?.hidden };
   saveBreadcrumbPrefs();
+}
+// Custom per-day display name ("Weekend at Ocala"), independent of the
+// date — the date/time is always shown alongside it (see breadcrumbDayKey
+// and breadcrumbDayTimeRange below) so renaming never hides when it was.
+function breadcrumbDayLabel(dayKey) {
+  const custom = breadcrumbDayPrefs[dayKey]?.name;
+  if (custom && custom.trim()) return custom.trim();
+  return breadcrumbDayDateLabel(dayKey);
+}
+function breadcrumbDayDateLabel(dayKey) {
+  return new Date(dayKey + "T00:00:00").toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+function setBreadcrumbDayName(dayKey, name) {
+  const trimmed = name && name.trim() ? name.trim() : undefined;
+  breadcrumbDayPrefs[dayKey] = { ...breadcrumbDayPrefs[dayKey], name: trimmed };
+  saveBreadcrumbPrefs();
+}
+// Earliest-to-latest clock time for a day's points (points arrive in
+// chronological order already, so the first/last entries are the bounds).
+function breadcrumbDayTimeRange(points) {
+  if (!points || !points.length) return "";
+  const fmt = (t) => new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const start = points[0].t;
+  const end = points[points.length - 1].t;
+  return start === end ? fmt(start) : `${fmt(start)} – ${fmt(end)}`;
 }
 
 function breadcrumbDayKey(t) {
@@ -1822,18 +1852,34 @@ async function openTrailsPanel() {
   const trails = await TrailStore.listTrails();
   const waypoints = await WaypointStore.listWaypoints();
   const breadcrumbCount = await BreadcrumbStore.count();
-  const breadcrumbDays = Array.from(breadcrumbPointsByDay().keys());
-  const breadcrumbLegend = breadcrumbDays
-    .map((dayKey, i) => {
+  const breadcrumbByDay = breadcrumbPointsByDay();
+  // Newest first — the most recent ride is what you're most likely to be
+  // toggling/renaming right after a trip.
+  const breadcrumbEntries = Array.from(breadcrumbByDay.entries()).reverse();
+  const breadcrumbRows = breadcrumbEntries
+    .map(([dayKey, points], reverseIndex) => {
+      // Color assignment stays keyed to chronological order (see
+      // breadcrumbPointsByDay's own comment) even though we list newest-first.
+      const i = breadcrumbEntries.length - 1 - reverseIndex;
       const color = breadcrumbDayColor(dayKey, i);
       const visible = isBreadcrumbDayVisible(dayKey);
-      const label = new Date(dayKey + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
-      return `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;margin-bottom:6px;">
-        <input type="color" class="breadcrumb-day-color" data-day="${dayKey}" value="${color}" title="Change this day's color" style="width:18px;height:18px;padding:0;border:none;border-radius:50%;background:none;cursor:pointer;" />
-        <button type="button" class="breadcrumb-day-toggle" data-day="${dayKey}" title="${visible ? "Hide" : "Show"} this day" style="background:none;border:none;padding:0;cursor:pointer;font-size:12px;color:${
-          visible ? "var(--text)" : "var(--text-dim)"
-        };text-decoration:${visible ? "none" : "line-through"};">${escHtml(label)}</button>
-      </span>`;
+      const label = breadcrumbDayLabel(dayKey);
+      const dateStr = breadcrumbDayDateLabel(dayKey);
+      const timeStr = breadcrumbDayTimeRange(points);
+      return `
+      <div class="trail-item" data-breadcrumb-day="${dayKey}">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+          <input type="color" class="breadcrumb-day-color" data-day="${dayKey}" value="${color}" title="Change this day's color" style="width:18px;height:18px;flex:none;padding:0;border:none;border-radius:50%;background:none;cursor:pointer;" />
+          <div style="min-width:0;">
+            <div class="breadcrumb-day-label" style="${visible ? "" : "color:var(--text-dim);text-decoration:line-through;"}">${escHtml(label)} <small style="color:var(--text-dim);">(${points.length} pts)</small></div>
+            <small>${escHtml(dateStr)}${timeStr ? " · " + escHtml(timeStr) : ""}</small>
+          </div>
+        </div>
+        <div>
+          <button class="pill-btn breadcrumb-day-toggle" data-day="${dayKey}">${visible ? "Hide" : "Show"}</button>
+          <button class="pill-btn breadcrumb-day-rename" data-day="${dayKey}">Rename</button>
+        </div>
+      </div>`;
     })
     .join("");
   const rows = trails
@@ -1884,7 +1930,7 @@ async function openTrailsPanel() {
       <div><div>Breadcrumb trail</div><small>${breadcrumbCount} points logged passively — everywhere you've been, not a named trail</small></div>
       <button class="pill-btn danger" id="clear-breadcrumb-btn">Clear</button>
     </div>
-    ${breadcrumbLegend ? `<div style="padding:6px 0 2px;font-size:12px;color:var(--text-dim);">${breadcrumbLegend}</div>` : ""}
+    ${breadcrumbRows}
     <h4 style="margin-bottom:4px;margin-top:14px;">Trails &amp; Routes</h4>
     ${rows || "<p>No saved trails yet. Tap Go to track one.</p>"}
     <h4 style="margin-bottom:4px;margin-top:14px;">Waypoints</h4>
@@ -1920,7 +1966,17 @@ async function openTrailsPanel() {
     btn.addEventListener("click", () => {
       toggleBreadcrumbDayVisible(btn.dataset.day);
       drawBreadcrumbLine();
-      openTrailsPanel(); // re-render the legend so the strikethrough/dim state updates
+      openTrailsPanel(); // re-render the legend so the strikethrough/dim state and Hide/Show label update
+    });
+  });
+  panelBody.querySelectorAll(".breadcrumb-day-rename").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const dayKey = btn.dataset.day;
+      const current = breadcrumbDayPrefs[dayKey]?.name || "";
+      const name = prompt(`Rename ${breadcrumbDayDateLabel(dayKey)}'s breadcrumb trail (leave blank to just show the date):`, current);
+      if (name === null) return; // cancelled
+      setBreadcrumbDayName(dayKey, name);
+      openTrailsPanel();
     });
   });
 
