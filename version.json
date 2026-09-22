@@ -1,6 +1,12 @@
 {
-  "current": "1.48",
+  "current": "1.49",
   "history": [
+    {
+      "version": "1.49",
+      "date": "2026-09-22",
+      "summary": "My Content reorder + clearer breadcrumb explanation, remove redundant compass control, merge stats HUD into the topbar, always-visible orientation toggle",
+      "commit": "1660186"
+    },
     {
       "version": "1.48",
       "date": "2026-09-22",
