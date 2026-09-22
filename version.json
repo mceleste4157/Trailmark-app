@@ -1,6 +1,12 @@
 {
-  "current": "1.21",
+  "current": "1.22",
   "history": [
+    {
+      "version": "1.22",
+      "date": "2026-09-22",
+      "summary": "Restyle the toolbar as icon-over-label buttons (onX-style)",
+      "commit": "ee0d819"
+    },
     {
       "version": "1.21",
       "date": "2026-09-22",
