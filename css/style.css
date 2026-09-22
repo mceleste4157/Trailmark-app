@@ -194,7 +194,8 @@ html, body {
 
 #btn-basemap,
 #btn-3d,
-#btn-weather {
+#btn-weather,
+#btn-radar {
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -205,6 +206,7 @@ html, body {
 }
 
 #btn-3d.active-pill,
+#btn-radar.active-pill,
 #btn-cell.active-pill {
   border-color: var(--accent-bright);
   color: var(--accent-bright);

@@ -337,6 +337,7 @@ document.getElementById("btn-basemap")?.addEventListener("click", () => {
 map.on("style.load", () => {
   if (terrain3dOn) add3dTerrainLayers(); // setTerrain/sky are wiped by setStyle same as any other layer — pitch itself isn't, so no need to re-ease it here
   if (cellTowersOn) refreshCellTowerLayer().catch((err) => console.warn("Cell tower re-layer failed:", err));
+  if (radarOn) addRadarLayer().catch((err) => console.warn("Radar re-layer failed:", err.message));
   drawBreadcrumbLine();
 });
 
@@ -3097,6 +3098,87 @@ async function openWeatherPanel() {
 }
 
 document.getElementById("btn-weather")?.addEventListener("click", openWeatherPanel);
+
+// ---------- Rain radar overlay ----------
+// RainViewer's public API (rainviewer.com) — free, no API key, CORS-
+// enabled, widely used for exactly this. Shows only the latest frame
+// (not a full animated loop — that's a real feature in its own right,
+// left for later if it's wanted) refreshed every 10 minutes while on,
+// since that's roughly how often new radar sweeps land.
+const RADAR_SOURCE_ID = "rainviewer-radar";
+let radarOn = false;
+let radarFrameTime = null;
+let radarRefreshTimer = null;
+
+async function fetchLatestRadarFrame() {
+  const res = await fetch("https://api.rainviewer.com/public/weather-maps.json");
+  if (!res.ok) throw new Error(`Radar lookup failed (${res.status})`);
+  const data = await res.json();
+  const frames = data.radar && data.radar.past;
+  if (!frames || !frames.length) throw new Error("No radar frames available right now");
+  const latest = frames[frames.length - 1];
+  return { host: data.host, path: latest.path, time: latest.time * 1000 };
+}
+
+async function addRadarLayer() {
+  const frame = await fetchLatestRadarFrame();
+  radarFrameTime = frame.time;
+  // 256px tiles, color scheme 2 (universal blue-green-red), smoothed
+  // with snow shown separately (RainViewer's "1_1" options string) —
+  // their own documented defaults for a legible overlay.
+  const tileUrl = `${frame.host}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`;
+  if (map.getSource(RADAR_SOURCE_ID)) {
+    map.getSource(RADAR_SOURCE_ID).setTiles([tileUrl]);
+  } else {
+    map.addSource(RADAR_SOURCE_ID, { type: "raster", tiles: [tileUrl], tileSize: 256, attribution: "Radar: RainViewer" });
+    map.addLayer({ id: "radar-layer", type: "raster", source: RADAR_SOURCE_ID, paint: { "raster-opacity": 0.65 } });
+  }
+  updateRadarButtonTitle();
+}
+
+function removeRadarLayer() {
+  if (map.getLayer("radar-layer")) map.removeLayer("radar-layer");
+  if (map.getSource(RADAR_SOURCE_ID)) map.removeSource(RADAR_SOURCE_ID);
+  radarFrameTime = null;
+}
+
+function updateRadarButtonTitle() {
+  const btn = document.getElementById("btn-radar");
+  if (!btn) return;
+  btn.title =
+    radarOn && radarFrameTime
+      ? `Radar as of ${new Date(radarFrameTime).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} — tap to hide`
+      : "Toggle rain radar overlay";
+}
+
+async function toggleRadar() {
+  if (!navigator.onLine && !radarOn) {
+    alert("Radar needs an internet connection.");
+    return;
+  }
+  const btn = document.getElementById("btn-radar");
+  if (!radarOn) {
+    try {
+      await addRadarLayer();
+      radarOn = true;
+      radarRefreshTimer = setInterval(() => {
+        addRadarLayer().catch((err) => console.warn("Radar refresh failed:", err.message));
+      }, 10 * 60 * 1000);
+    } catch (err) {
+      alert("Couldn't load radar: " + err.message);
+      return;
+    }
+  } else {
+    radarOn = false;
+    clearInterval(radarRefreshTimer);
+    radarRefreshTimer = null;
+    removeRadarLayer();
+  }
+  if (btn) btn.classList.toggle("active-pill", radarOn);
+  updateRadarButtonTitle();
+}
+
+document.getElementById("btn-radar")?.addEventListener("click", toggleRadar);
 
 // GPX 1.1 — the standard format for GPS tracks, readable by basically
 // every mapping/GPS tool (Garmin, Google Earth, CalTopo, onX's own
