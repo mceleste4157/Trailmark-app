@@ -482,6 +482,7 @@ const GroupBackend = (() => {
       cost: record.cost,
       note: record.note || "",
       receipt_path,
+      reminder_date: record.reminderDate || null,
       created_at: record.createdAt,
     };
     if (record.remoteId) row.id = record.remoteId;

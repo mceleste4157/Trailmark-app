@@ -2553,6 +2553,11 @@ async function openVehicleDetailPanel(vehicle) {
           <small>${new Date(r.date).toLocaleDateString()}${typeof r.miles === "number" ? ` · ${r.miles.toLocaleString()} mi` : ""}${
             typeof r.cost === "number" ? ` · $${r.cost.toFixed(2)}` : ""
           }${r.note ? ` · ${escHtml(r.note)}` : ""}</small>
+          ${
+            r.reminderDate
+              ? `<small style="display:block;color:${r.reminderDate <= Date.now() ? "var(--danger)" : "var(--accent-bright)"};">${maintenanceReminderText(r)}</small>`
+              : ""
+          }
         </div>
         <div>
           <button class="pill-btn" data-action="view">View</button>
@@ -2611,12 +2616,16 @@ async function openVehicleDetailPanel(vehicle) {
 
 // existingRecord: null to add, or a record to edit (receipt itself isn't
 // editable in place — see MaintenanceStore.updateRecord's comment).
+// Local date components, not toISOString() (which is UTC and can show
+// the wrong calendar day in the evening in US timezones).
+function dateInputValue(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function openMaintenanceRecordFormPanel(vehicle, existingRecord) {
-  const r = existingRecord || { type: "other", date: Date.now(), miles: "", cost: "", note: "" };
-  // Local date components, not toISOString() (which is UTC and can show
-  // the wrong calendar day in the evening in US timezones).
-  const rDate = new Date(r.date);
-  const dateStr = `${rDate.getFullYear()}-${String(rDate.getMonth() + 1).padStart(2, "0")}-${String(rDate.getDate()).padStart(2, "0")}`;
+  const r = existingRecord || { type: "other", date: Date.now(), miles: "", cost: "", note: "", reminderDate: null };
+  const dateStr = dateInputValue(r.date);
   openPanel(
     existingRecord ? "Edit Maintenance" : "Log Maintenance",
     `
@@ -2638,9 +2647,24 @@ function openMaintenanceRecordFormPanel(vehicle, existingRecord) {
         : `<label>Receipt photo (optional)</label>
            <input type="file" id="maint-receipt" accept="image/*" capture="environment" />`
     }
+    <label>Remind me</label>
+    <select id="maint-reminder-preset" style="width:100%;margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);">
+      <option value="">No reminder</option>
+      <option value="3">In 3 months</option>
+      <option value="6">In 6 months</option>
+      <option value="12">In 1 year</option>
+      <option value="custom" ${r.reminderDate ? "selected" : ""}>Custom date…</option>
+    </select>
+    <input id="maint-reminder-date" type="date" value="${r.reminderDate ? dateInputValue(r.reminderDate) : ""}" style="${r.reminderDate ? "" : "display:none;"}" />
+    <p style="color:var(--text-dim);font-size:12px;margin-top:4px;">
+      This app can't send a notification while it's closed — you'll see a reminder the next time you open it on or after this date.
+    </p>
     <button class="primary" id="maint-save-btn">${existingRecord ? "Save Changes" : "Save Record"}</button>
     `
   );
+  document.getElementById("maint-reminder-preset").addEventListener("change", (e) => {
+    document.getElementById("maint-reminder-date").style.display = e.target.value === "custom" ? "" : "none";
+  });
   document.getElementById("maint-save-btn").addEventListener("click", async () => {
     const type = document.getElementById("maint-type").value;
     const dateVal = document.getElementById("maint-date").value;
@@ -2648,6 +2672,19 @@ function openMaintenanceRecordFormPanel(vehicle, existingRecord) {
     const miles = parseInt(document.getElementById("maint-miles").value, 10);
     const cost = parseFloat(document.getElementById("maint-cost").value);
     const note = document.getElementById("maint-note").value.trim();
+
+    const presetVal = document.getElementById("maint-reminder-preset").value;
+    let reminderDate = null;
+    if (presetVal === "custom") {
+      const rd = document.getElementById("maint-reminder-date").value;
+      reminderDate = rd ? new Date(rd + "T12:00:00").getTime() : null;
+    } else if (presetVal) {
+      const base = new Date(date); // counts from the service date, not "today"
+      base.setMonth(base.getMonth() + parseInt(presetVal, 10));
+      reminderDate = base.getTime();
+    }
+    if (reminderDate) await ensureNotificationPermissionRequested();
+
     if (existingRecord) {
       await MaintenanceStore.updateRecord(existingRecord.id, {
         type,
@@ -2655,6 +2692,7 @@ function openMaintenanceRecordFormPanel(vehicle, existingRecord) {
         miles: isFinite(miles) ? miles : null,
         cost: isFinite(cost) ? cost : null,
         note,
+        reminderDate,
       });
       const updated = await MaintenanceStore.getRecord(existingRecord.id);
       if (updated.remoteId && session) {
@@ -2672,6 +2710,7 @@ function openMaintenanceRecordFormPanel(vehicle, existingRecord) {
         cost: isFinite(cost) ? cost : null,
         note,
         receipt,
+        reminderDate,
       });
       // Logging a service is the most common moment you'd actually know
       // the current mileage — keep the vehicle's odometer in step rather
@@ -2709,6 +2748,11 @@ async function openMaintenanceRecordPanel(vehicle, record) {
     </p>
     ${record.note ? `<p>${escHtml(record.note)}</p>` : ""}
     ${
+      record.reminderDate
+        ? `<p style="color:${record.reminderDate <= Date.now() ? "var(--danger)" : "var(--accent-bright)"};font-weight:600;">⏰ ${maintenanceReminderText(record)}</p>`
+        : ""
+    }
+    ${
       receiptUrl
         ? `<img src="${receiptUrl}" alt="Receipt" style="width:100%;border-radius:8px;display:block;margin-top:8px;" />`
         : record.receiptRemotePath || record.receiptData
@@ -2722,6 +2766,105 @@ async function openMaintenanceRecordPanel(vehicle, record) {
   document.getElementById("edit-maint-btn").addEventListener("click", () => openMaintenanceRecordFormPanel(vehicle, record));
   document.getElementById("back-to-vehicle-btn").addEventListener("click", () => openVehicleDetailPanel(vehicle));
 }
+
+// ---------- Maintenance reminders ----------
+// Asked for only once, at the moment a reminder is first set — not
+// proactively on load, which would be a surprise permission prompt for a
+// feature the person hasn't touched yet. A "denied" or dismissed prompt
+// just means the banner (always shown regardless — see
+// checkMaintenanceReminders) is the only signal; this is a bonus on top
+// of it, not a replacement.
+let notificationPermissionRequested = false;
+async function ensureNotificationPermissionRequested() {
+  if (notificationPermissionRequested) return;
+  notificationPermissionRequested = true;
+  if (typeof Notification === "undefined" || Notification.permission !== "default") return;
+  try {
+    await Notification.requestPermission();
+  } catch (err) {
+    console.warn("Notification permission request failed:", err.message);
+  }
+}
+
+function maintenanceReminderText(r) {
+  const days = Math.round((r.reminderDate - Date.now()) / 86400000);
+  if (days > 0) return `Due ${new Date(r.reminderDate).toLocaleDateString()}`;
+  if (days === 0) return "Due today";
+  return `Overdue since ${new Date(r.reminderDate).toLocaleDateString()}`;
+}
+
+// Runs once when the app loads (see map.on("load", ...) below) — the
+// honest scope of what a static, no-backend app can do: there's no
+// server to push a notification while this tab is closed, so "the next
+// time you open the app on or after the due date" is the real mechanic.
+// The banner covers that reliably; a real Notification on top of it only
+// fires for the subset of due reminders this device hasn't shown yet,
+// and only if the browser already granted permission.
+async function checkMaintenanceReminders() {
+  const now = Date.now();
+  const allRecords = await MaintenanceStore.listAllRecords();
+  const due = allRecords.filter((r) => r.reminderDate && r.reminderDate <= now);
+  const newlyDue = due.filter((r) => !r.reminderNotified);
+
+  for (const r of newlyDue) {
+    await MaintenanceStore.markReminderNotified(r.id);
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      try {
+        const vehicle = await VehicleStore.getVehicle(r.vehicleId);
+        new Notification("Maintenance due", {
+          body: `${MAINTENANCE_TYPE_LABELS[r.type] || "Maintenance"} for ${vehicle ? vehicleLabel(vehicle) : "your vehicle"}`,
+          icon: "icons/icon-192.png",
+        });
+      } catch (err) {
+        console.warn("Could not show a maintenance notification:", err.message);
+      }
+    }
+  }
+
+  const banner = document.getElementById("maintenance-reminder-banner");
+  if (due.length > 0) {
+    banner.textContent = `🔧 ${due.length} maintenance reminder${due.length === 1 ? "" : "s"} due — tap to view`;
+    banner.classList.remove("hidden");
+  } else {
+    banner.classList.add("hidden");
+  }
+}
+
+async function openMaintenanceRemindersDuePanel() {
+  const now = Date.now();
+  const allRecords = await MaintenanceStore.listAllRecords();
+  const due = allRecords.filter((r) => r.reminderDate && r.reminderDate <= now).sort((a, b) => a.reminderDate - b.reminderDate);
+  const vehicles = await VehicleStore.listVehicles();
+  const vehicleById = new Map(vehicles.map((v) => [v.id, v]));
+
+  const rows = due
+    .map((r) => {
+      const vehicle = vehicleById.get(r.vehicleId);
+      return `<div class="trail-item" data-id="${r.id}">
+        <div>
+          <div>${MAINTENANCE_TYPE_LABELS[r.type] || "Other"} — ${escHtml(vehicle ? vehicle.name : "Unknown vehicle")}</div>
+          <small style="color:var(--danger);">${maintenanceReminderText(r)}</small>
+        </div>
+        <button class="pill-btn" data-action="view">View</button>
+      </div>`;
+    })
+    .join("");
+
+  openPanel(
+    "Maintenance Due",
+    `${rows || '<p style="color:var(--text-dim);font-size:13px;">Nothing due.</p>'}`
+  );
+  panelBody.querySelectorAll('.trail-item[data-id] button[data-action="view"]').forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = Number(btn.closest(".trail-item").dataset.id);
+      const record = due.find((r) => r.id === id);
+      const vehicle = vehicleById.get(record.vehicleId);
+      if (vehicle) openMaintenanceRecordPanel(vehicle, record);
+    });
+  });
+}
+
+document.getElementById("maintenance-reminder-banner").addEventListener("click", openMaintenanceRemindersDuePanel);
 
 // GPX 1.1 — the standard format for GPS tracks, readable by basically
 // every mapping/GPS tool (Garmin, Google Earth, CalTopo, onX's own
@@ -3150,6 +3293,8 @@ async function syncPersonalData() {
           receiptData: null, // fetched on demand when actually viewed — see openMaintenanceRecordPanel
           receiptType: null,
           receiptRemotePath: r.receipt_path,
+          reminderDate: r.reminder_date,
+          reminderNotified: false, // local-only — this device hasn't shown it yet even if another one has
           createdAt: r.created_at,
         });
       }
@@ -3618,6 +3763,7 @@ map.on("load", async () => {
   await refreshWaypointMarkers();
   await refreshPhotoMarkers();
   await initBreadcrumbTrail();
+  checkMaintenanceReminders().catch((err) => console.warn("Maintenance reminder check failed:", err.message));
 });
 
 // ---------- Update detection ----------

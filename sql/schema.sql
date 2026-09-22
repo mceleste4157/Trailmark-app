@@ -397,8 +397,13 @@ create table if not exists personal_maintenance_records (
   cost numeric(10, 2),
   note text default '',
   receipt_path text, -- path within the private 'maintenance-receipts' storage bucket, if any
+  reminder_date bigint, -- optional "next due" date (e.g. "oil change in 6 months") — see checkMaintenanceReminders in js/app.js
   created_at bigint not null
 );
+
+-- create table is a no-op on a database where this table already existed
+-- before reminder_date was added — add it explicitly too, idempotent.
+alter table personal_maintenance_records add column if not exists reminder_date bigint;
 
 alter table personal_maintenance_records enable row level security;
 

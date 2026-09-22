@@ -116,6 +116,25 @@ html, body {
 
 #error-banner.hidden { display: none; }
 
+#maintenance-reminder-banner {
+  position: absolute;
+  z-index: 6;
+  top: 192px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  background: var(--panel);
+  border: 1px solid var(--accent-bright);
+  color: var(--accent-bright);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#maintenance-reminder-banner.hidden { display: none; }
+
 #btn-version {
   font-size: 10px;
   font-weight: 600;

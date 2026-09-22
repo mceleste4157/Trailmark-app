@@ -323,8 +323,10 @@ const MAINTENANCE_TYPES = ["oil_change", "tire_rotation", "brakes", "fluids", "b
 const MaintenanceStore = {
   // receipt is a Blob/File (from a file input) or null — stored the same
   // ArrayBuffer-not-Blob way as PhotoStore.savePhoto, for the same
-  // WebKit-compatibility reason (see the comment there).
-  async saveRecord({ vehicleId, type, date, miles, cost, note, receipt }) {
+  // WebKit-compatibility reason (see the comment there). reminderDate is
+  // an optional epoch-ms "next due" date (e.g. "oil change in 6 months")
+  // — see js/app.js's checkMaintenanceReminders for how it's surfaced.
+  async saveRecord({ vehicleId, type, date, miles, cost, note, receipt, reminderDate }) {
     let receiptData = null;
     let receiptType = null;
     if (receipt) {
@@ -340,6 +342,8 @@ const MaintenanceStore = {
       note: note || "",
       receiptData,
       receiptType,
+      reminderDate: reminderDate || null,
+      reminderNotified: false, // local-only — see checkMaintenanceReminders in js/app.js
       createdAt: Date.now(),
       remoteId: null, // set once pushed to personal_maintenance_records
       receiptRemotePath: null, // set once the receipt's been uploaded to the private 'maintenance-receipts' bucket
@@ -356,14 +360,21 @@ const MaintenanceStore = {
     return db.maintenanceRecords.get(id);
   },
   // Doesn't touch the receipt — replacing a receipt photo isn't
-  // supported in-place, delete and re-log the record for that.
-  async updateRecord(id, { type, date, miles, cost, note }) {
+  // supported in-place, delete and re-log the record for that. Resets
+  // reminderNotified whenever the reminder date actually changes, so a
+  // pushed-out or newly-set date gets its own fresh notification instead
+  // of being silently suppressed by an old one already shown.
+  async updateRecord(id, { type, date, miles, cost, note, reminderDate }) {
+    const existing = await db.maintenanceRecords.get(id);
+    const normalizedReminder = reminderDate || null;
     return db.maintenanceRecords.update(id, {
       type: type || "other",
       date,
       miles: typeof miles === "number" ? miles : null,
       cost: typeof cost === "number" ? cost : null,
       note: note || "",
+      reminderDate: normalizedReminder,
+      reminderNotified: normalizedReminder === existing.reminderDate ? existing.reminderNotified : false,
     });
   },
   async deleteRecord(id) {
@@ -377,6 +388,9 @@ const MaintenanceStore = {
   },
   async setReceiptRemotePath(id, receiptRemotePath) {
     return db.maintenanceRecords.update(id, { receiptRemotePath });
+  },
+  async markReminderNotified(id) {
+    return db.maintenanceRecords.update(id, { reminderNotified: true });
   },
   async importSynced(record) {
     return db.maintenanceRecords.add(record);
