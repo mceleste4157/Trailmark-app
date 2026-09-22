@@ -1996,6 +1996,8 @@ async function openTrailsPanel() {
       const id = Number(e.target.closest(".trail-item").dataset.id);
       const action = e.target.dataset.action;
       if (action === "delete") {
+        const trail = await TrailStore.getTrail(id);
+        if (!confirm(`Delete "${trail.name}"? This can't be undone.`)) return;
         await TrailStore.deleteTrail(id);
         openTrailsPanel();
       } else if (action === "rename") {
