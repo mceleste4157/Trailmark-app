@@ -1,6 +1,12 @@
 {
-  "current": "1.16",
+  "current": "1.17",
   "history": [
+    {
+      "version": "1.17",
+      "date": "2026-09-22",
+      "summary": "Fix schema.sql: drop is_group_member() with cascade",
+      "commit": "dc5d817"
+    },
     {
       "version": "1.16",
       "date": "2026-09-22",
