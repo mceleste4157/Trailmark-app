@@ -31,7 +31,12 @@ drop table if exists group_emergency_alerts cascade;
 drop table if exists group_messages cascade;
 drop table if exists group_members cascade;
 drop table if exists groups cascade;
-drop function if exists is_group_member(uuid);
+-- cascade: the old group-scoped storage.objects policies ("members can
+-- read/upload their groups' trail photos") reference this function and
+-- aren't dropped until the Storage section further down — without
+-- cascade here, that ordering makes Postgres refuse this drop outright
+-- and abort the whole script before anything below it ever runs.
+drop function if exists is_group_member(uuid) cascade;
 
 -- ---------- Drop emergency alerts (SOS feature removed) ----------
 drop table if exists emergency_alerts cascade;
