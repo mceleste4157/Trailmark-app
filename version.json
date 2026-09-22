@@ -1,6 +1,12 @@
 {
-  "current": "1.17",
+  "current": "1.18",
   "history": [
+    {
+      "version": "1.18",
+      "date": "2026-09-22",
+      "summary": "Fix profiles FK for embeds, add chat bubbles + unread badge",
+      "commit": "9508516"
+    },
     {
       "version": "1.17",
       "date": "2026-09-22",
