@@ -1,6 +1,12 @@
 {
-  "current": "1.25",
+  "current": "1.26",
   "history": [
+    {
+      "version": "1.26",
+      "date": "2026-09-22",
+      "summary": "Fix shared_trails to reference profiles(id) like every other shared table",
+      "commit": "0f93198"
+    },
     {
       "version": "1.25",
       "date": "2026-09-22",
