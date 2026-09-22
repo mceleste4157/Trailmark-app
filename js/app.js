@@ -3211,7 +3211,15 @@ async function openLayersPanel() {
   });
 }
 
-document.getElementById("btn-weather")?.addEventListener("click", openWeatherPanel);
+document.getElementById("btn-weather")?.addEventListener("click", () => {
+  // Toggle: tapping it again while it's already the open panel hides it,
+  // rather than just re-fetching/re-rendering the same forecast.
+  if (!panel.classList.contains("hidden") && panelTitle.textContent.startsWith("Weather")) {
+    closePanel();
+  } else {
+    openWeatherPanel();
+  }
+});
 
 document.getElementById("btn-layers")?.addEventListener("click", openLayersPanel);
 
