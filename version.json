@@ -1,6 +1,12 @@
 {
-  "current": "1.40",
+  "current": "1.41",
   "history": [
+    {
+      "version": "1.41",
+      "date": "2026-09-22",
+      "summary": "Add a rain radar overlay (RainViewer)",
+      "commit": "a2e6840"
+    },
     {
       "version": "1.40",
       "date": "2026-09-22",
