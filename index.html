@@ -6,7 +6,16 @@
 <title>Trailmark</title>
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+<link rel="icon" href="icons/icon-32.png" sizes="32x32" type="image/png" />
+<!-- iOS "Add to Home Screen" ignores the web manifest entirely — it only
+     ever looks at this tag (and only accepts PNG, not the SVG above). -->
+<link rel="apple-touch-icon" href="icons/icon-180.png" />
 <meta name="theme-color" content="#166534" />
+<!-- Launches full-screen from the iOS home screen (no Safari chrome),
+     which matters for something meant to sit in a dash mount. -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Trailmark" />
 
 <!-- Vendored locally (not CDN) so the service worker can cache these for
      offline use — see vendor/README.md for versions and how to update. -->
