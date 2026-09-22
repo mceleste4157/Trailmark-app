@@ -55,7 +55,7 @@ final class RouteRepository {
                         latitude: $0.lat,
                         longitude: $0.lng,
                         altitudeM: $0.ele,
-                        timestampMs: $0.t.map(Int64.init)
+                        timestampMs: $0.t.map { Int64($0) }
                     )
                 },
                 distanceMeters: distanceMeters ?? calculateDistance()
