@@ -1,6 +1,12 @@
 {
-  "current": "1.18",
+  "current": "1.19",
   "history": [
+    {
+      "version": "1.19",
+      "date": "2026-09-22",
+      "summary": "Settings menu, colored crew, breadcrumb controls, iOS zoom fix, download-area bug",
+      "commit": "6b9d7da"
+    },
     {
       "version": "1.18",
       "date": "2026-09-22",
