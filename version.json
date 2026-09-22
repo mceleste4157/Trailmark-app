@@ -1,6 +1,12 @@
 {
-  "current": "1.35",
+  "current": "1.36",
   "history": [
+    {
+      "version": "1.36",
+      "date": "2026-09-22",
+      "summary": "Add personal trip folders, real elevation backfill, grade-colored trail lines, and waypoint severity",
+      "commit": "687f13a"
+    },
     {
       "version": "1.35",
       "date": "2026-09-22",
