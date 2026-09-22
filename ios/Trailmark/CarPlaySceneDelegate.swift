@@ -184,7 +184,6 @@ extension CarPlaySceneDelegate: CPMapTemplateDelegate {
             distanceRemaining: Measurement(value: remaining, unit: .meters),
             timeRemaining: time
         )
-        self.mapTemplate?.updateEstimates(estimates, for: route)
         navigationSession?.updateTravelEstimates(estimates, for: maneuver)
     }
 }
