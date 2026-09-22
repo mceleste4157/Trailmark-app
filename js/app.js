@@ -3869,15 +3869,28 @@ function deactivateSocial() {
 // only needed the one time an account is created).
 function renderAuthPanel(mode = "signin") {
   const isSignup = mode === "signup";
+  // A real <form> (not just bare inputs + a JS-click button) with
+  // autocomplete hints and a type="submit" button is what actually gets
+  // the browser's own password manager to offer saving/autofilling this
+  // — the app never sees or stores the password itself either way,
+  // which is also just how it should be.
   openPanel(
     isSignup ? "Create Account" : "Sign In",
     `
-    ${isSignup ? `<label>Display name</label>\n    <input id="auth-name" placeholder="What everyone sees you as" />` : ""}
+    <form id="auth-form" autocomplete="on">
+    ${
+      isSignup
+        ? `<label>Display name</label>\n    <input id="auth-name" name="name" autocomplete="name" placeholder="What everyone sees you as" />`
+        : ""
+    }
     <label>Email</label>
-    <input id="auth-email" type="email" placeholder="you@example.com" />
+    <input id="auth-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" />
     <label>Password</label>
-    <input id="auth-password" type="password" placeholder="At least 6 characters" />
-    <button class="primary" id="auth-submit">${isSignup ? "Create Account" : "Sign In"}</button>
+    <input id="auth-password" name="password" type="password" autocomplete="${
+      isSignup ? "new-password" : "current-password"
+    }" placeholder="At least 6 characters" />
+    <button class="primary" type="submit" id="auth-submit">${isSignup ? "Create Account" : "Sign In"}</button>
+    </form>
     <button id="auth-switch-mode" style="background:none;border:none;color:var(--accent);font-size:13px;margin-top:8px;cursor:pointer;">
       ${isSignup ? "Already have an account? Sign in" : "New here? Create an account"}
     </button>
@@ -3888,7 +3901,8 @@ function renderAuthPanel(mode = "signin") {
     document.getElementById("auth-error").textContent = err.message || String(err);
   };
   document.getElementById("auth-switch-mode").addEventListener("click", () => renderAuthPanel(isSignup ? "signin" : "signup"));
-  document.getElementById("auth-submit").addEventListener("click", async () => {
+  document.getElementById("auth-form").addEventListener("submit", async (e) => {
+    e.preventDefault(); // this is an SPA — handle it in JS, but the submit event itself is what a browser's password manager watches for
     try {
       const email = document.getElementById("auth-email").value.trim();
       const password = document.getElementById("auth-password").value;
