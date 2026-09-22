@@ -1,6 +1,7 @@
 import UIKit
 import CarPlay
 import MapKit
+import Combine
 
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
     private var interfaceController: CPInterfaceController?
@@ -9,7 +10,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var navigationSession: CPNavigationSession?
     private let location = LocationService.shared
     private let follower = RouteFollower()
+    private var activeRoute: TrailmarkRoute?
     private var routesById: [String: TrailmarkRoute] = [:]
+    private var locationCancellable: AnyCancellable?
 
     func templateApplicationScene(
         _ templateApplicationScene: CPTemplateApplicationScene,
@@ -36,6 +39,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         self.mapTemplate = map
 
         interfaceController.setRootTemplate(map, animated: true)
+        locationCancellable = location.$lastFix
+            .compactMap { $0 }
+            .sink { [weak self] fix in
+                guard let self, let route = self.activeRoute else { return }
+                self.follower.update(fix: fix)
+                if let maneuver = self.navigationSession?.upcomingManeuvers.first {
+                    self.updateCarPlayEstimates(route: route, maneuver: maneuver)
+                }
+                if self.follower.state.status == .arrived {
+                    self.finishNavigation()
+                }
+            }
         location.start()
     }
 
@@ -49,6 +64,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         self.carWindow = nil
         self.mapTemplate = nil
         self.navigationSession = nil
+        self.activeRoute = nil
+        self.locationCancellable = nil
     }
 
     private func showRoutes() {
@@ -137,6 +154,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         navigationSession?.cancelTrip()
         navigationSession = nil
         follower.stop()
+        activeRoute = nil
     }
 
     private func finishNavigation() {
@@ -155,6 +173,7 @@ extension CarPlaySceneDelegate: CPMapTemplateDelegate {
         guard let routeId = trip.userInfo as? String, let route = routesById[routeId] else { return }
 
         follower.start(route: route)
+        activeRoute = route
         navigationSession = mapTemplate.startNavigationSession(for: trip)
 
         let maneuver = CPManeuver()
