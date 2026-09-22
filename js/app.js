@@ -2404,3 +2404,47 @@ if ("serviceWorker" in navigator) {
     location.reload();
   });
 }
+
+// ---------- Error reporting ----------
+// A "tap to report" prompt on real uncaught errors, rather than relying
+// on someone remembering to mention a bug after the fact. Anonymous-
+// friendly (see sql/schema.sql) since plenty of the app works without an
+// account at all. Deduped per unique message so one error thrown
+// repeatedly (e.g. inside a GPS watch callback) doesn't spam the banner.
+const errorBanner = document.getElementById("error-banner");
+const reportedErrorMessages = new Set();
+let pendingErrorReport = null;
+
+function offerErrorReport(message, stack) {
+  if (!message || reportedErrorMessages.has(message)) return;
+  reportedErrorMessages.add(message);
+  pendingErrorReport = { message, stack: stack || "" };
+  errorBanner.classList.remove("hidden");
+}
+
+window.addEventListener("error", (event) => {
+  offerErrorReport(event.error?.message || event.message, event.error?.stack);
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason;
+  offerErrorReport(reason?.message || String(reason), reason?.stack);
+});
+
+errorBanner.addEventListener("click", async () => {
+  if (!pendingErrorReport) return;
+  const report = pendingErrorReport;
+  errorBanner.classList.add("hidden");
+  pendingErrorReport = null;
+  try {
+    await GroupBackend.reportError({
+      message: report.message,
+      stack: report.stack,
+      url: location.href,
+      userAgent: navigator.userAgent,
+      appVersion: btnVersion.textContent,
+    });
+    alert("Thanks — that's been reported.");
+  } catch (err) {
+    alert("Couldn't send the report: " + err.message);
+  }
+});

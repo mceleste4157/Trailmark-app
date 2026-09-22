@@ -97,6 +97,25 @@ html, body {
 
 #update-banner.hidden { display: none; }
 
+#error-banner {
+  position: absolute;
+  z-index: 6;
+  top: 148px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  background: var(--panel);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#error-banner.hidden { display: none; }
+
 #btn-version {
   font-size: 10px;
   font-weight: 600;

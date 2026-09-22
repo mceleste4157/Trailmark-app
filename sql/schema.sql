@@ -252,6 +252,32 @@ create policy "authenticated users can send messages"
   on messages for insert
   with check (auth.role() = 'authenticated' and auth.uid() = user_id);
 
+-- ---------- Error reports ----------
+-- User-triggered ("tap to report") client error reports — a lightweight
+-- way to actually hear about bugs instead of relying on word-of-mouth.
+-- Open to anonymous writes on purpose: plenty of the app (map, GPS
+-- recording, offline maps, local waypoints/photos) works without an
+-- account at all, and errors there matter just as much. No select
+-- policy is defined — reports are only ever read via the Supabase SQL
+-- Editor (which runs as an admin and bypasses RLS), not through the app.
+create table if not exists error_reports (
+  id uuid primary key default uuid_generate_v4(),
+  message text not null,
+  stack text,
+  url text,
+  user_agent text,
+  app_version text,
+  reported_by uuid references profiles(id), -- null if not signed in
+  created_at timestamptz not null default now()
+);
+
+alter table error_reports enable row level security;
+
+drop policy if exists "anyone can report an error" on error_reports;
+create policy "anyone can report an error"
+  on error_reports for insert
+  with check (true);
+
 -- ---------- Migrate existing FKs to reference profiles(id) ----------
 -- If these tables already existed (created before the `references
 -- profiles(id)` change above), their user/creator column still points at

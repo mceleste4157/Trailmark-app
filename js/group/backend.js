@@ -40,6 +40,7 @@ const GroupBackend = (() => {
       subscribeLocations: disabled,
       sendMessage: disabled,
       subscribeMessages: disabled,
+      reportError: disabled,
     };
   }
 
@@ -305,6 +306,29 @@ const GroupBackend = (() => {
       .subscribe();
   }
 
+  // ---------- Error reports ----------
+  // Anonymous-friendly on purpose (see the RLS policy in sql/schema.sql):
+  // most of the app works without an account, and bugs hit there matter
+  // just as much. reported_by is best-effort — a failed lookup shouldn't
+  // block the report itself.
+  async function reportError({ message, stack, url, userAgent, appVersion }) {
+    let uid = null;
+    try {
+      uid = await currentUserId();
+    } catch {
+      // Not signed in, or no session — report anonymously.
+    }
+    const { error } = await client.from("error_reports").insert({
+      message,
+      stack: stack || null,
+      url: url || null,
+      user_agent: userAgent || null,
+      app_version: appVersion || null,
+      reported_by: uid || null,
+    });
+    if (error) throw error;
+  }
+
   return {
     enabled: true,
     onAuthChange,
@@ -333,5 +357,6 @@ const GroupBackend = (() => {
     subscribeLocations,
     sendMessage,
     subscribeMessages,
+    reportError,
   };
 })();
