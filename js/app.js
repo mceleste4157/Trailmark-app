@@ -4156,9 +4156,29 @@ updateBanner.addEventListener("click", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
+  window.addEventListener("load", async () => {
+    // GitHub Pages serves sw.js with `cache-control: max-age=600` (it
+    // doesn't support per-file cache headers, so there's no way to ask
+    // it not to) and won't let a browser bypass that for as long as 10
+    // minutes — worse on iOS Safari, which is less reliable than Chrome
+    // about forcing a real network check for service worker updates,
+    // and worse still for a home-screen-installed PWA, which has no
+    // reload button to force one with at all. Registering under a URL
+    // that changes with the deployed version (not on every load — only
+    // when version.json's `current` actually changes) sidesteps the
+    // whole problem: a new deploy is a URL this device has never cached
+    // before, so the browser has no choice but to fetch it fresh.
+    let swUrl = "sw.js";
+    try {
+      const res = await fetch("version.json", { cache: "no-store" });
+      const data = await res.json();
+      if (data.current) swUrl = `sw.js?v=${encodeURIComponent(data.current)}`;
+    } catch {
+      // Offline or version.json unreachable — register the plain URL;
+      // whatever's already cached/controlling still works either way.
+    }
     navigator.serviceWorker
-      .register("sw.js")
+      .register(swUrl)
       .then((registration) => {
         if (registration.waiting && navigator.serviceWorker.controller) {
           showUpdateBanner(registration.waiting);
