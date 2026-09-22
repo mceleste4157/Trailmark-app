@@ -1182,7 +1182,7 @@ function openWaypointPanel() {
         const lng = pos.coords.longitude;
         await WaypointStore.saveWaypoint({ name, lat, lng, note, category });
         await refreshWaypointMarkers();
-        syncPersonalData();
+        syncPersonalData().catch(() => {});
 
         const shareBox = document.getElementById("wp-share");
         if (shareBox && shareBox.checked && session) {
@@ -1297,7 +1297,7 @@ document.getElementById("btn-stop-recording").addEventListener("click", async ()
     startedAt: result.startedAt,
     endedAt: result.endedAt,
   });
-  syncPersonalData();
+  syncPersonalData().catch(() => {});
 
   if (liveTrailSourceId) {
     map.removeLayer(liveTrailSourceId);
@@ -1394,7 +1394,7 @@ document.getElementById("btn-planning-finish").addEventListener("click", async (
     startedAt: null,
     endedAt: null,
   });
-  syncPersonalData();
+  syncPersonalData().catch(() => {});
   alert(`Saved "${name}" — find it under My Content.`);
 });
 
@@ -2251,7 +2251,7 @@ async function importGpxFile(file) {
     await WaypointStore.saveWaypoint({ name: wpt.name, lat: wpt.lat, lng: wpt.lng, note: wpt.note, category: "other" });
   }
   if (waypoints.length) await refreshWaypointMarkers();
-  if (tracks.length || waypoints.length) syncPersonalData();
+  if (tracks.length || waypoints.length) syncPersonalData().catch(() => {});
   if (firstImportedId !== null) showTrailOnMap(await TrailStore.getTrail(firstImportedId));
 
   const parts = [];
@@ -2340,13 +2340,13 @@ if (GroupBackend.enabled) {
   GroupBackend.getSession()
     .then((s) => {
       session = s;
-      if (s) syncPersonalData();
+      if (s) syncPersonalData().catch(() => {});
     })
     .catch((err) => console.warn("Could not restore session:", err));
   GroupBackend.onAuthChange((s) => {
     session = s;
     if (!s) deactivateSocial();
-    else syncPersonalData();
+    else syncPersonalData().catch(() => {});
   });
 }
 
@@ -2589,7 +2589,7 @@ function renderAuthPanel(mode = "signin") {
         return;
       }
       activateSocial();
-      syncPersonalData();
+      syncPersonalData().catch(() => {});
       renderChatPanel();
     } catch (err) {
       showError(err);
