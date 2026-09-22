@@ -1178,6 +1178,9 @@ function openToolsPanel() {
       <button class="tools-grid-btn" id="tools-vehicles-btn" title="Track vehicles, maintenance, and receipts — private to you">
         <span class="tools-grid-icon">🔧</span><span>Vehicles</span>
       </button>
+      <button class="tools-grid-btn" id="tools-stats-btn" title="Miles driven, elevation climbed, and more">
+        <span class="tools-grid-icon">📊</span><span>Stats</span>
+      </button>
     </div>
     `
   );
@@ -1188,6 +1191,7 @@ function openToolsPanel() {
   });
   document.getElementById("tools-waypoint-btn").addEventListener("click", openWaypointPanel);
   document.getElementById("tools-vehicles-btn").addEventListener("click", openVehiclesPanel);
+  document.getElementById("tools-stats-btn").addEventListener("click", () => openStatsPanel(false));
   document.getElementById("tools-route-btn").addEventListener("click", () => {
     if (GpsRecorder.isRecording()) {
       alert("You're already tracking a ride. Use the Stop & Save button on the map first.");
@@ -2865,6 +2869,225 @@ async function openMaintenanceRemindersDuePanel() {
 }
 
 document.getElementById("maintenance-reminder-banner").addEventListener("click", openMaintenanceRemindersDuePanel);
+
+// ---------- Stats dashboard ----------
+// Everything here is derived from data already stored locally — no
+// separate "stats" table, just an aggregation pass over trails/
+// waypoints/vehicles/maintenance records each time the panel opens.
+async function computeStats(yearOnly) {
+  const [trails, waypoints, vehicles, records] = await Promise.all([
+    TrailStore.listTrails(),
+    WaypointStore.listWaypoints(),
+    VehicleStore.listVehicles(),
+    MaintenanceStore.listAllRecords(),
+  ]);
+
+  const currentYear = new Date().getFullYear();
+  const inScope = (ms) => !yearOnly || new Date(ms).getFullYear() === currentYear;
+
+  const recordedTrails = trails.filter((t) => t.kind === "recorded" && inScope(t.startedAt || t.createdAt));
+  const plannedCount = trails.filter((t) => t.kind === "planned" && inScope(t.createdAt)).length;
+  const importedCount = trails.filter((t) => t.kind === "imported" && inScope(t.createdAt)).length;
+
+  let totalMeters = 0;
+  let totalGainFt = 0;
+  const activeDays = new Set();
+  for (const t of recordedTrails) {
+    totalMeters += t.distanceMeters || 0;
+    const profile = buildElevationProfile(t);
+    if (profile) totalGainFt += profile.gainFt;
+    const d = new Date(t.startedAt || t.createdAt);
+    activeDays.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+  }
+
+  const scopedWaypoints = waypoints.filter((w) => inScope(w.createdAt));
+  const scopedRecords = records.filter((r) => inScope(r.date));
+  const maintenanceCost = scopedRecords.reduce((sum, r) => sum + (r.cost || 0), 0);
+
+  return {
+    recordedCount: recordedTrails.length,
+    plannedCount,
+    importedCount,
+    totalMiles: metersToMiles(totalMeters),
+    totalGainFt,
+    activeDaysCount: activeDays.size,
+    waypointCount: scopedWaypoints.length,
+    vehicleCount: vehicles.length, // not year-scoped — "vehicles you own" isn't a per-year thing
+    maintenanceCount: scopedRecords.length,
+    maintenanceCost,
+  };
+}
+
+function statTileHtml(value, label) {
+  return `<div class="elev-stat"><div class="elev-stat-value">${value}</div><div class="elev-stat-label">${label}</div></div>`;
+}
+
+async function openStatsPanel(yearOnly) {
+  const s = await computeStats(yearOnly);
+  openPanel(
+    "Stats",
+    `
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <button class="pill-btn" id="stats-year-btn" style="${!yearOnly ? "" : "border-color:var(--accent-bright);color:var(--accent-bright);"}">This Year</button>
+      <button class="pill-btn" id="stats-all-btn" style="${yearOnly ? "" : "border-color:var(--accent-bright);color:var(--accent-bright);"}">All Time</button>
+    </div>
+    <div class="elev-stats">
+      ${statTileHtml(s.totalMiles.toFixed(0), "Miles Driven")}
+      ${statTileHtml(Math.round(s.totalGainFt).toLocaleString(), "Ft Climbed")}
+      ${statTileHtml(s.recordedCount, "Trails Recorded")}
+      ${statTileHtml(s.activeDaysCount, "Days Out")}
+    </div>
+    <div class="elev-stats" style="margin-top:8px;">
+      ${statTileHtml(s.waypointCount, "Waypoints")}
+      ${statTileHtml(s.plannedCount + s.importedCount, "Planned/Imported")}
+      ${statTileHtml(s.vehicleCount, "Vehicles")}
+      ${statTileHtml("$" + s.maintenanceCost.toFixed(0), "Maintenance Spend")}
+    </div>
+    `
+  );
+  document.getElementById("stats-year-btn").addEventListener("click", () => openStatsPanel(true));
+  document.getElementById("stats-all-btn").addEventListener("click", () => openStatsPanel(false));
+}
+
+// ---------- Weather & sunset ----------
+// National Weather Service API (api.weather.gov) — free, no API key,
+// CORS-enabled, official US government data, and unlike a generic
+// forecast API it also carries active weather alerts (flash flood,
+// severe storm warnings), which matter a lot more here than a plain
+// forecast given this app's water-crossing waypoints. US coverage only,
+// which matches this app's southeast-US scope. Based on the map's
+// current center, not GPS — "what's it doing where I'm about to go" is
+// usually more useful for trip planning than "what's it doing right here".
+async function fetchNwsWeather(lat, lng) {
+  const pointsRes = await fetch(`https://api.weather.gov/points/${lat.toFixed(4)},${lng.toFixed(4)}`);
+  if (!pointsRes.ok) throw new Error(`Location lookup failed (${pointsRes.status})`);
+  const points = await pointsRes.json();
+  const forecastUrl = points.properties.forecast;
+  const loc = points.properties.relativeLocation?.properties;
+
+  const [forecastRes, alertsRes] = await Promise.all([
+    fetch(forecastUrl),
+    fetch(`https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lng.toFixed(4)}`),
+  ]);
+  const forecast = forecastRes.ok ? await forecastRes.json() : null;
+  const alerts = alertsRes.ok ? await alertsRes.json() : null;
+
+  return {
+    city: loc?.city,
+    state: loc?.state,
+    periods: forecast ? forecast.properties.periods.slice(0, 4) : [],
+    alerts: alerts ? alerts.features : [],
+  };
+}
+
+// The standard NOAA/Almanac sunrise-sunset algorithm — computed entirely
+// client-side (no API needed for this part), zenith=90.833° for sunset
+// (accounts for atmospheric refraction + the sun's apparent radius) or
+// 96° for the end of civil twilight ("fully dark").
+function calcSunEvent(lat, lng, date, zenith) {
+  const rad = Math.PI / 180;
+  const dayOfYear = Math.floor((date - new Date(date.getFullYear(), 0, 0)) / 86400000);
+  const lngHour = lng / 15;
+  const t = dayOfYear + (18 - lngHour) / 24;
+
+  const M = 0.9856 * t - 3.289;
+  let L = M + 1.916 * Math.sin(M * rad) + 0.02 * Math.sin(2 * M * rad) + 282.634;
+  L = ((L % 360) + 360) % 360;
+
+  let RA = (1 / rad) * Math.atan(0.91764 * Math.tan(L * rad));
+  RA = ((RA % 360) + 360) % 360;
+  const Lquadrant = Math.floor(L / 90) * 90;
+  const RAquadrant = Math.floor(RA / 90) * 90;
+  RA = (RA + (Lquadrant - RAquadrant)) / 15;
+
+  const sinDec = 0.39782 * Math.sin(L * rad);
+  const cosDec = Math.cos(Math.asin(sinDec));
+
+  const cosH = (Math.cos(zenith * rad) - sinDec * Math.sin(lat * rad)) / (cosDec * Math.cos(lat * rad));
+  if (cosH > 1 || cosH < -1) return null; // sun never sets / never rises at this latitude today
+
+  const H = (1 / rad) * Math.acos(cosH);
+  const T = H / 15 + RA - 0.06571 * t - 6.622;
+
+  let UT = ((T - lngHour) % 24 + 24) % 24;
+  const midnightUtc = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  // setUTCHours(fractionalValue) silently truncates the fraction instead
+  // of carrying it into minutes — work in raw milliseconds instead.
+  return new Date(midnightUtc + UT * 3600000);
+}
+
+function formatCountdown(target) {
+  const ms = target - Date.now();
+  if (ms <= 0) return "already passed";
+  const h = Math.floor(ms / 3600000);
+  const m = Math.round((ms % 3600000) / 60000);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+async function openWeatherPanel() {
+  const center = map.getCenter();
+  const now = new Date();
+  const sunset = calcSunEvent(center.lat, center.lng, now, 90.833);
+  const darkTime = calcSunEvent(center.lat, center.lng, now, 96);
+
+  openPanel(
+    "Weather",
+    `<p style="color:var(--text-dim);font-size:13px;">Loading conditions for the map's current view…</p>`
+  );
+
+  const sunHtml = `
+    <div class="region-item">
+      <div><div>🌅 Sunset</div><small>${sunset ? sunset.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "N/A"}</small></div>
+      <div style="color:var(--text-dim);font-size:13px;">${sunset ? "in " + formatCountdown(sunset) : ""}</div>
+    </div>
+    <div class="region-item">
+      <div><div>🌑 Fully Dark</div><small>${darkTime ? darkTime.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "N/A"}</small></div>
+      <div style="color:var(--text-dim);font-size:13px;">${darkTime ? "in " + formatCountdown(darkTime) : ""}</div>
+    </div>
+  `;
+
+  if (!navigator.onLine) {
+    openPanel("Weather", `${sunHtml}<p style="color:var(--warn);font-size:13px;margin-top:8px;">Forecast needs an internet connection.</p>`);
+    return;
+  }
+
+  try {
+    const w = await fetchNwsWeather(center.lat, center.lng);
+    const alertsHtml = w.alerts.length
+      ? w.alerts
+          .map(
+            (a) => `<div class="region-item" style="border-color:var(--danger);">
+              <div><div style="color:var(--danger);font-weight:700;">⚠️ ${escHtml(a.properties.event)}</div><small>${escHtml(a.properties.headline || "")}</small></div>
+            </div>`
+          )
+          .join("")
+      : "";
+    const forecastHtml = w.periods
+      .map(
+        (p) => `<div class="region-item">
+          <div><div>${escHtml(p.name)}</div><small>${escHtml(p.shortForecast)}${
+            p.probabilityOfPrecipitation?.value ? ` · ${p.probabilityOfPrecipitation.value}% precip` : ""
+          }</small></div>
+          <div style="font-size:20px;font-weight:700;">${p.temperature}°${p.temperatureUnit}</div>
+        </div>`
+      )
+      .join("");
+    openPanel(
+      "Weather" + (w.city ? ` — ${escHtml(w.city)}, ${escHtml(w.state || "")}` : ""),
+      `${alertsHtml}${sunHtml}${forecastHtml}
+      <p style="color:var(--text-dim);font-size:11px;margin-top:8px;">National Weather Service · based on the map's current view, not your GPS location</p>`
+    );
+  } catch (err) {
+    openPanel(
+      "Weather",
+      `${sunHtml}<p style="color:var(--warn);font-size:13px;margin-top:8px;">Couldn't load the forecast: ${escHtml(err.message)}${
+        center.lat < 24 || center.lat > 50 || center.lng < -125 || center.lng > -66 ? " (NWS only covers the US)" : ""
+      }</p>`
+    );
+  }
+}
+
+document.getElementById("btn-weather")?.addEventListener("click", openWeatherPanel);
 
 // GPX 1.1 — the standard format for GPS tracks, readable by basically
 // every mapping/GPS tool (Garmin, Google Earth, CalTopo, onX's own

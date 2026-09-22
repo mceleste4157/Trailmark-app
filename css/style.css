@@ -193,7 +193,8 @@ html, body {
 }
 
 #btn-basemap,
-#btn-3d {
+#btn-3d,
+#btn-weather {
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 999px;
