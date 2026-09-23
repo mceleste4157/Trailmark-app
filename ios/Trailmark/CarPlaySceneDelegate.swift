@@ -46,6 +46,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 guard let self, let route = self.activeRoute else { return }
                 self.follower.update(fix: fix)
                 if let maneuver = self.navigationSession?.upcomingManeuvers.first {
+                    self.configureCarPlayManeuver(maneuver)
                     self.updateCarPlayEstimates(route: route, maneuver: maneuver)
                 }
                 if self.follower.state.status == .arrived {
@@ -167,10 +168,7 @@ extension CarPlaySceneDelegate: CPMapTemplateDelegate {
         navigationSession = mapTemplate.startNavigationSession(for: trip)
 
         let maneuver = CPManeuver()
-        maneuver.instructionVariants = ["Continue on trail", "Continue"]
-        maneuver.dashboardInstructionVariants = ["Continue on trail"]
-        maneuver.notificationInstructionVariants = ["Continue on trail"]
-        maneuver.maneuverType = .followRoad
+        configureCarPlayManeuver(maneuver)
 
         navigationSession?.upcomingManeuvers = [maneuver]
         updateCarPlayEstimates(route: route, maneuver: maneuver)
@@ -194,6 +192,23 @@ extension CarPlaySceneDelegate: CPMapTemplateDelegate {
             timeRemaining: time
         )
         navigationSession?.updateEstimates(estimates, for: maneuver)
+    }
+
+    private func configureCarPlayManeuver(_ maneuver: CPManeuver) {
+        let instruction: String
+        switch follower.state.status {
+        case .arrived:
+            instruction = "Arrived at destination"
+        case .offRoute:
+            instruction = "Off route - return to the trail"
+        default:
+            instruction = follower.state.nextManeuver?.instruction ?? "Continue on trail"
+        }
+
+        maneuver.instructionVariants = [instruction]
+        maneuver.dashboardInstructionVariants = [instruction]
+        maneuver.notificationInstructionVariants = [instruction]
+        maneuver.maneuverType = .followRoad
     }
 }
 

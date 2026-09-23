@@ -51,7 +51,12 @@ Build one platform-neutral navigation contract around these concepts:
 - Off-route state: whether the vehicle has moved materially away from the active route.
 - Destination: coordinate/name and arrival state.
 
-For the first native milestone, support navigation along a saved Trailmark route. Do not assume road-style turn instructions until a routing/maneuver provider is integrated.
+The native clients currently support navigation along saved Trailmark route geometry. Route followers on iOS and Android compute progress, off-route/arrival state, and the next geometry-derived maneuver by scanning ahead for significant bearing changes in the stored trail polyline. These maneuvers are intentionally off-road cues, not road-network directions from a routing service.
+
+Current maneuver thresholds:
+- 35 degrees or greater: left/right cue.
+- 100 degrees or greater: sharp left/sharp right cue.
+- No remaining significant turn: continue to the end of the trail.
 
 ## Offline maps
 

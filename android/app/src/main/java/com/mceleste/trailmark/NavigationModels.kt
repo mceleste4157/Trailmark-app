@@ -28,6 +28,16 @@ data class TrailmarkFix(
 
 enum class NavigationStatus { IDLE, NAVIGATING, ARRIVED, OFF_ROUTE }
 
+enum class ManeuverDirection { STRAIGHT, LEFT, RIGHT, SHARP_LEFT, SHARP_RIGHT }
+
+data class TrailmarkManeuver(
+    val pointIndex: Int,
+    val direction: ManeuverDirection,
+    val instruction: String,
+    val distanceMeters: Double,
+    val turnDegrees: Double
+)
+
 data class NavigationState(
     val status: NavigationStatus = NavigationStatus.IDLE,
     val routeId: String? = null,
@@ -36,5 +46,6 @@ data class NavigationState(
     val progress: Double? = null,
     val nextPointIndex: Int? = null,
     val distanceToNextPointMeters: Double? = null,
+    val nextManeuver: TrailmarkManeuver? = null,
     val currentFix: TrailmarkFix? = null
 )

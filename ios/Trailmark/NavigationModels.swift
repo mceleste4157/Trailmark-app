@@ -30,6 +30,22 @@ enum NavigationStatus: String {
     case idle, navigating, arrived, offRoute = "off_route"
 }
 
+enum ManeuverDirection: String, Codable, Equatable {
+    case straight
+    case left
+    case right
+    case sharpLeft = "sharp_left"
+    case sharpRight = "sharp_right"
+}
+
+struct TrailmarkManeuver: Codable, Equatable {
+    let pointIndex: Int
+    let direction: ManeuverDirection
+    let instruction: String
+    let distanceMeters: Double
+    let turnDegrees: Double
+}
+
 struct NavigationState {
     var status: NavigationStatus = .idle
     var routeId: String?
@@ -38,5 +54,6 @@ struct NavigationState {
     var progress: Double?
     var nextPointIndex: Int?
     var distanceToNextPointMeters: Double?
+    var nextManeuver: TrailmarkManeuver?
     var currentFix: TrailmarkFix?
 }

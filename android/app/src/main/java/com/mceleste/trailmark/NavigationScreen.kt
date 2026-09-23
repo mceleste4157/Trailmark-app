@@ -60,12 +60,13 @@ class NavigationScreen(carContext: CarContext, private val selectedRoute: Trailm
         val cue = when (state.status) {
             NavigationStatus.ARRIVED -> "Arrived at destination"
             NavigationStatus.OFF_ROUTE -> "Off route - return to the trail"
-            else -> "Continue on trail"
+            else -> state.nextManeuver?.instruction ?: "Continue on trail"
         }
 
         val step = Step.Builder(CarText.Builder(cue).build()).build()
+        val stepDistance = state.nextManeuver?.distanceMeters ?: remaining
         val routing = RoutingInfo.Builder()
-            .setCurrentStep(step, Distance.create(remaining, Distance.UNIT_METERS))
+            .setCurrentStep(step, Distance.create(stepDistance, Distance.UNIT_METERS))
             .build()
 
         val eta = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(
