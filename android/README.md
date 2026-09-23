@@ -13,6 +13,7 @@ Native Android foundation for Trailmark's Android Auto navigation client.
 - Required `NAVIGATION_TEMPLATES` and `ACCESS_SURFACE` declarations.
 - Android Auto route picker using `ListTemplate`.
 - Supabase-backed saved route loading with SQLite offline fallback.
+- Foreground service wrapper while Android Auto trail navigation is active.
 
 Google's current documentation requires navigation apps to declare the navigation template permission and the navigation app category. Android Auto discovery also requires the automotive app descriptor.
 
@@ -35,7 +36,7 @@ Map tiles should eventually be rendered from a native offline-capable map source
 ## Production requirements
 
 - Request runtime location permissions.
-- Run location access through the appropriate foreground service when needed.
+- Validate foreground-service notification and location behavior on Android 13+ and Android Auto hardware.
 - Replace the development host validator with the production validator before release.
 - Test with Android Auto Desktop Head Unit and real compatible head units.
 - Complete Google's navigation-app review/distribution requirements.

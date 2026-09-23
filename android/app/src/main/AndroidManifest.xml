@@ -33,5 +33,10 @@
                 <category android:name="androidx.car.app.category.NAVIGATION" />
             </intent-filter>
         </service>
+
+        <service
+            android:name=".NavigationForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
     </application>
 </manifest>

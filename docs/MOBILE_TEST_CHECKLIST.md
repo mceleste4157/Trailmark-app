@@ -13,6 +13,7 @@
 9. Select a saved Trailmark route.
 10. Verify route preview, navigation start, GPS position, next maneuver, remaining distance, off-route state, and arrival state.
 11. Disable network after a successful route load and verify the route list still shows cached routes.
+12. Lock the phone or background the app during active navigation and verify location updates continue.
 
 ## Android
 
@@ -25,6 +26,7 @@
 7. Verify saved routes appear in the Android Auto route picker.
 8. Select a route and verify the navigation template, next maneuver, remaining distance, GPS updates, stop navigation, and off-route state.
 9. Disable network after a successful route load and verify the route picker still shows cached routes.
+10. Verify Trailmark shows an active foreground-service notification during navigation and removes it after stopping navigation.
 
 ## Known release blockers
 

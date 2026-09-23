@@ -4,6 +4,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.content.Intent
+import android.os.Build
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.SurfaceCallback
@@ -34,6 +36,7 @@ class NavigationScreen(carContext: CarContext, private val selectedRoute: Trailm
 
     init {
         follower.start(selectedRoute)
+        startForegroundNavigation()
         try { locationService.start() } catch (_: SecurityException) {}
         lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onDestroy(owner: LifecycleOwner) {
@@ -97,7 +100,17 @@ class NavigationScreen(carContext: CarContext, private val selectedRoute: Trailm
 
     private fun stopNavigation() {
         locationService.stop()
+        carContext.stopService(Intent(carContext, NavigationForegroundService::class.java))
         follower.stop()
+    }
+
+    private fun startForegroundNavigation() {
+        val intent = Intent(carContext, NavigationForegroundService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            carContext.startForegroundService(intent)
+        } else {
+            carContext.startService(intent)
+        }
     }
 
     private fun redrawSurface() {
