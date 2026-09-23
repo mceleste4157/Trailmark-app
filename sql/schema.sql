@@ -136,7 +136,12 @@ create or replace function create_group(p_name text, p_password text)
 returns table(group_id uuid, group_name text)
 language plpgsql
 security definer
-set search_path = public
+-- crypt()/gen_salt() (pgcrypto) live in the `extensions` schema on
+-- Supabase, not `public` — needs to be on the search path explicitly,
+-- since `set search_path` here replaces the caller's path rather than
+-- adding to it (that's also why it's pinned to just these two schemas
+-- instead of left to inherit whatever the caller's path happens to be).
+set search_path = public, extensions
 as $$
 declare
   new_id uuid;
@@ -165,7 +170,7 @@ create or replace function join_group(p_name text, p_password text)
 returns table(group_id uuid, group_name text)
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions -- crypt() lives in extensions on Supabase — see create_group's comment above
 as $$
 declare
   found_id uuid;
