@@ -17,6 +17,11 @@
     <string name="offline">Offline</string>
     <string name="center_map">Center</string>
     <string name="account">Account</string>
+    <string name="go_and_track">Go &amp; Track</string>
+    <string name="tools">Tools</string>
+    <string name="my_content">My Content</string>
+    <string name="offline_maps">Offline Maps</string>
+    <string name="chat">Chat</string>
     <string name="no_routes">No saved routes are available yet.</string>
     <string name="select_route">Select a saved trail</string>
     <string name="offline_requires_route">Select a route before downloading an offline map.</string>

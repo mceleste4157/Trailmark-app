@@ -10,7 +10,6 @@ import android.provider.Settings
 import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -56,10 +55,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        findViewById<Button>(R.id.routes_button).setOnClickListener { showRoutePicker() }
-        findViewById<Button>(R.id.offline_button).setOnClickListener { confirmOfflineDownload() }
-        findViewById<Button>(R.id.center_button).setOnClickListener { centerMap() }
-        findViewById<Button>(R.id.account_button).setOnClickListener { showSetupMenu() }
+        findViewById<View>(R.id.go_track_button).setOnClickListener { centerMap() }
+        findViewById<View>(R.id.tools_button).setOnClickListener { explainNavigationPermissions() }
+        findViewById<View>(R.id.my_content_button).setOnClickListener { showRoutePicker() }
+        findViewById<View>(R.id.offline_maps_button).setOnClickListener { confirmOfflineDownload() }
+        findViewById<View>(R.id.chat_button).setOnClickListener { showSetupMenu() }
+        findViewById<View>(R.id.account_button).setOnClickListener { showSetupMenu() }
 
         loadRoutes()
         if (!hasForegroundLocation()) requestForegroundLocation()
