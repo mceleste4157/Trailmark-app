@@ -2,14 +2,31 @@ import Foundation
 
 final class RouteRepository {
     static let shared = RouteRepository()
+    private let offlineStore = OfflineRouteStore.shared
 
     private init() {}
 
     func fetchRoutes() async throws -> [TrailmarkRoute] {
         guard let token = SupabaseAuth.shared.accessToken else {
-            throw NSError(domain: "TrailmarkRoutes", code: 401, userInfo: [NSLocalizedDescriptionKey: "Sign in to Trailmark first."])
+            return offlineStore.loadRoutes()
         }
 
+        do {
+            let routes = try await fetchRemoteRoutes(token: token)
+            if !routes.isEmpty {
+                offlineStore.save(routes: routes)
+            }
+            return routes.isEmpty ? offlineStore.loadRoutes() : routes
+        } catch {
+            let offlineRoutes = offlineStore.loadRoutes()
+            if offlineRoutes.isEmpty {
+                throw error
+            }
+            return offlineRoutes
+        }
+    }
+
+    private func fetchRemoteRoutes(token: String) async throws -> [TrailmarkRoute] {
         var components = URLComponents(
             url: TrailmarkConfig.supabaseURL.appendingPathComponent("rest/v1/shared_trails"),
             resolvingAgainstBaseURL: false

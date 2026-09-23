@@ -11,6 +11,8 @@ Native iOS foundation for Trailmark.
 - CarPlay scene using `CPMapTemplate`.
 - MapKit-backed CarPlay map window.
 - Navigation entitlement declaration and CarPlay scene manifest.
+- Supabase-backed saved route loading with native offline fallback.
+- Atomic native offline route snapshot storage in Application Support.
 
 Apple's navigation integration requires a navigation entitlement and a CarPlay scene whose root template is `CPMapTemplate`. The map window is reserved for map content; driver controls belong in CarPlay templates.
 
@@ -32,6 +34,6 @@ The project is generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen) 
 
 ## Current limitation
 
-The native layer still needs the Trailmark route repository adapter. The browser app's trails live in Dexie/IndexedDB, so the native app cannot read them directly. The next adapter should use the existing Supabase schema for authenticated shared trails and a native local database for downloaded/offline routes.
+The native route repository loads authenticated saved routes from Supabase and stores the last successful route snapshot in native app storage for offline use. The browser app's trails still live in Dexie/IndexedDB, so native apps cannot read browser-only local trails unless those trails have been synced/shared through the backend.
 
-No fake routing provider is used. Until that adapter is connected, the CarPlay shell is intentionally a foundation rather than a production navigation experience.
+No fake routing provider is used. CarPlay navigation follows saved Trailmark route geometry; a full maneuver-generation engine and production offline map renderer are still future work.

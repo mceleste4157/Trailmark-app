@@ -11,18 +11,24 @@ Native Android foundation for Trailmark's Android Auto navigation client.
 - Android Auto automotive app descriptor.
 - Navigation surface callback foundation for drawing a Trailmark route.
 - Required `NAVIGATION_TEMPLATES` and `ACCESS_SURFACE` declarations.
+- Android Auto route picker using `ListTemplate`.
+- Supabase-backed saved route loading with SQLite offline fallback.
 
 Google's current documentation requires navigation apps to declare the navigation template permission and the navigation app category. Android Auto discovery also requires the automotive app descriptor.
 
 ## Build
 
-Open the `android/` directory in Android Studio and let Gradle sync.
+Open the `android/` directory in Android Studio and let Gradle sync. From the repository root you can also run:
+
+```
+gradle -p android assembleDebug
+```
 
 ## Current limitation
 
-`NavigationScreen.kt` currently contains a small placeholder route so the navigation pipeline can be exercised. Replace that route with a native Trailmark repository adapter.
+Android Auto now starts on a native route picker and pushes `NavigationScreen` only after a saved trail is selected. `RouteRepository` loads authenticated Trailmark routes from Supabase and caches them in the native SQLite `OfflineRouteStore`; if the user is offline or unauthenticated, the repository returns previously cached routes.
 
-The browser app's Dexie/IndexedDB database is not directly available to the Android process. The production adapter should load authenticated Trailmark routes from Supabase and maintain a native offline route store.
+The browser app's Dexie/IndexedDB database is not directly available to the Android process. Browser-only local trails still need to be synced/shared through the backend before native clients can cache them.
 
 Map tiles should eventually be rendered from a native offline-capable map source. The surface renderer is deliberately isolated so that MapLibre/another native renderer can replace the current development drawing without changing the navigation template.
 

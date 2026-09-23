@@ -101,7 +101,7 @@ class NavigationScreen(carContext: CarContext, private val selectedRoute: Trailm
 
     private fun redrawSurface() {
         val container = surface ?: return
-        val s = container.surface
+        val s = container.surface ?: return
         val canvas: Canvas = try {
             s.lockCanvas(null) ?: return
         } catch (_: Exception) {

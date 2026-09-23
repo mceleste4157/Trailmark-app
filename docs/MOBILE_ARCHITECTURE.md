@@ -57,7 +57,13 @@ For the first native milestone, support navigation along a saved Trailmark route
 
 The browser implementation downloads vector tiles into Cache Storage. Native apps should eventually maintain a native tile/resource store. The native layer must not depend on the browser service worker for CarPlay/Android Auto operation.
 
-Offline route data should be stored separately from map tiles so a saved route remains navigable even if map resources are unavailable.
+Offline route data is stored separately from map tiles so a saved route remains navigable even if map resources are unavailable. Android persists routes and ordered route points in SQLite (`OfflineRouteStore`). iOS persists the last successful route snapshot atomically in Application Support (`OfflineRouteStore`). Both native repositories cache successful Supabase route fetches and fall back to cached routes when offline.
+
+The offline map renderer should stay separate from route storage:
+- Use MapLibre Native or another native renderer that supports offline tile packs.
+- Keep a native tile-region table keyed by region id, style/source URL, bounds, zoom range, byte size, and download state.
+- Render saved trail geometry from the native route store over the map renderer.
+- Allow navigation to continue from cached route geometry even when a map tile region is missing or partially downloaded.
 
 ## CarPlay
 
