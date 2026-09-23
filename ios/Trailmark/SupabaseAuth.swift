@@ -9,11 +9,14 @@ enum TrailmarkConfig {
 final class SupabaseAuth: ObservableObject {
     static let shared = SupabaseAuth()
     @Published private(set) var accessToken: String?
+    @Published private(set) var userId: String?
 
     private let tokenKey = "trailmark.supabase.access-token"
+    private let userIdKey = "trailmark.supabase.user-id"
 
     private init() {
-        accessToken = loadToken()
+        accessToken = loadItem(tokenKey)
+        userId = loadItem(userIdKey)
     }
 
     var isSignedIn: Bool { accessToken != nil }
@@ -32,35 +35,43 @@ final class SupabaseAuth: ObservableObject {
         }
 
         let payload = try JSONDecoder().decode(TokenResponse.self, from: data)
-        saveToken(payload.accessToken)
-        await MainActor.run { self.accessToken = payload.accessToken }
+        saveItem(payload.accessToken, key: tokenKey)
+        saveItem(payload.user.id, key: userIdKey)
+        await MainActor.run {
+            self.accessToken = payload.accessToken
+            self.userId = payload.user.id
+        }
     }
 
     func signOut() {
-        deleteToken()
+        deleteItem(tokenKey)
+        deleteItem(userIdKey)
         accessToken = nil
+        userId = nil
     }
 
     private struct TokenResponse: Decodable {
         let accessToken: String
-        enum CodingKeys: String, CodingKey { case accessToken = "access_token" }
+        let user: User
+        struct User: Decodable { let id: String }
+        enum CodingKeys: String, CodingKey { case accessToken = "access_token", user }
     }
 
-    private func saveToken(_ token: String) {
-        let data = Data(token.utf8)
+    private func saveItem(_ value: String, key: String) {
+        let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: tokenKey,
+            kSecAttrAccount as String: key,
             kSecValueData as String: data
         ]
         SecItemDelete(query as CFDictionary)
         SecItemAdd(query as CFDictionary, nil)
     }
 
-    private func loadToken() -> String? {
+    private func loadItem(_ key: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: tokenKey,
+            kSecAttrAccount as String: key,
             kSecReturnData as String: true
         ]
         var result: AnyObject?
@@ -69,10 +80,10 @@ final class SupabaseAuth: ObservableObject {
         return String(data: data, encoding: .utf8)
     }
 
-    private func deleteToken() {
+    private func deleteItem(_ key: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: tokenKey
+            kSecAttrAccount as String: key
         ]
         SecItemDelete(query as CFDictionary)
     }
