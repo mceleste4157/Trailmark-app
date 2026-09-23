@@ -18,6 +18,9 @@ Native Android foundation for Trailmark's Android Auto navigation client.
 - Navigation-intent handling for Assistant/Gemini destination requests.
 - Review/test-drive simulation through `onAutoDriveEnabled`.
 - Turn-by-turn navigation notifications with `CarAppExtender`.
+- MapLibre Native phone map with saved-route and live GPS overlays.
+- Route-bounded MapLibre offline region downloads (zoom levels 8-16).
+- MapLibre-rendered Android Auto map surface with route overview and heading-up navigation camera.
 
 Google's current documentation requires navigation apps to declare the navigation template permission and the navigation app category. Android Auto discovery also requires the automotive app descriptor.
 
@@ -40,18 +43,17 @@ To trigger Android Auto's review simulation while navigation is active:
 adb shell dumpsys activity service com.mceleste.trailmark/.TrailmarkCarAppService AUTO_DRIVE
 ```
 
-## Current limitation
+## Route and map data
 
 Android Auto now starts on a native route picker and pushes `NavigationScreen` only after a saved trail is selected. `RouteRepository` loads authenticated Trailmark routes from Supabase and caches them in the native SQLite `OfflineRouteStore`; if the user is offline or unauthenticated, the repository returns previously cached routes.
 
-The browser app's Dexie/IndexedDB database is not directly available to the Android process. Browser-only local trails still need to be synced/shared through the backend before native clients can cache them.
+The browser app's Dexie/IndexedDB database is not directly available to the Android process. Browser-only local trails still need to be synced/shared through the backend before native clients can cache them. Select a synced route in the phone app and use **Offline** while connected; Android stores the native style and tiles for the padded route bounds. Repeated downloads reuse or resume the route's existing region.
 
-Map tiles should eventually be rendered from a native offline-capable map source. The surface renderer is deliberately isolated so that MapLibre/another native renderer can replace the current development drawing without changing the navigation template.
+Both the phone map and Android Auto surface use MapLibre Native with the OpenFreeMap Liberty style. Saved geometry remains available from SQLite even when no map region has been downloaded, so route following and navigation cues do not depend on tile availability.
 
 ## Production requirements
 
 - Validate foreground-service notification and location behavior on Android 13+ and Android Auto hardware.
 - Verify the release host allowlist against current production Android Auto hosts.
-- Add native offline map tiles and replace the development route surface.
 - Test with Android Auto Desktop Head Unit and real compatible head units.
 - Complete Google's navigation-app review/distribution requirements.

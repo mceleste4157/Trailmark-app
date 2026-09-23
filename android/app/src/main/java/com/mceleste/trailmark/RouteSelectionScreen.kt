@@ -48,7 +48,7 @@ class RouteSelectionScreen(
         val list = ItemList.Builder()
             .setNoItemsMessage("No saved Trailmark routes available")
 
-        routes.forEach { route ->
+        for (route in routes) {
             list.addItem(Row.Builder()
                 .setTitle(route.name)
                 .addText(routeSummary(route))

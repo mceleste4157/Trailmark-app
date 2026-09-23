@@ -44,7 +44,7 @@ class OfflineRouteStore(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     fun saveRoutes(routes: List<TrailmarkRoute>) {
         writableDatabase.transaction {
-            routes.forEach { route ->
+            for (route in routes) {
                 val routeValues = ContentValues().apply {
                     put("id", route.id)
                     put("name", route.name)

@@ -11,4 +11,23 @@
     <string name="notifications_ready">notifications ready</string>
     <string name="notification_permission_needed">notification permission needed</string>
     <string name="permission_status">%1$s; %2$s; %3$s.</string>
+    <string name="app_name">Trailmark</string>
+    <string name="map_loading">Loading map</string>
+    <string name="routes">Routes</string>
+    <string name="offline">Offline</string>
+    <string name="center_map">Center</string>
+    <string name="account">Account</string>
+    <string name="no_routes">No saved routes are available yet.</string>
+    <string name="select_route">Select a saved trail</string>
+    <string name="offline_requires_route">Select a route before downloading an offline map.</string>
+    <string name="offline_download_started">Preparing offline map for %1$s</string>
+    <string name="offline_download_progress">Downloading %1$s: %2$d%%</string>
+    <string name="offline_download_complete">%1$s is ready offline</string>
+    <string name="offline_download_failed">Offline download failed: %1$s</string>
+    <string name="signed_in">Signed in. Loading saved routes.</string>
+    <string name="sign_in_failed">Sign-in failed.</string>
+    <string name="cancel">Cancel</string>
+    <string name="download">Download</string>
+    <string name="selected_route">%1$s · %2$.1f mi</string>
+    <string name="location_permission_explanation">Trailmark needs precise location for trail navigation. Enable all-the-time location for Android Auto navigation while the phone screen is off.</string>
 </resources>

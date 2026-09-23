@@ -64,9 +64,9 @@ The browser implementation downloads vector tiles into Cache Storage. Native app
 
 Offline route data is stored separately from map tiles so a saved route remains navigable even if map resources are unavailable. Android persists routes and ordered route points in SQLite (`OfflineRouteStore`). iOS persists the last successful route snapshot atomically in Application Support (`OfflineRouteStore`). Both native repositories cache successful Supabase route fetches and fall back to cached routes when offline.
 
-The offline map renderer should stay separate from route storage:
-- Use MapLibre Native or another native renderer that supports offline tile packs.
-- Keep a native tile-region table keyed by region id, style/source URL, bounds, zoom range, byte size, and download state.
+The offline map renderer stays separate from route storage:
+- Android uses MapLibre Native offline regions keyed by Trailmark route id, with padded route bounds and zoom levels 8-16.
+- MapLibre owns the native tile-region database; Trailmark stores route id and name in each region's metadata.
 - Render saved trail geometry from the native route store over the map renderer.
 - Allow navigation to continue from cached route geometry even when a map tile region is missing or partially downloaded.
 
@@ -92,6 +92,9 @@ lifecycle. It publishes step and destination estimates through
 navigation notification, and can simulate progress along route geometry when
 the host enables test-drive mode. Assistant/Gemini `geo:` navigation intents
 are routed to the saved-route picker, with matching route names prioritized.
+The phone activity and Android Auto surface both render the selected route with
+MapLibre Native. Before a GPS fix, the vehicle surface frames the route; during
+navigation it uses a centered, heading-up camera and overlays the current fix.
 
 ## Initial implementation sequence
 

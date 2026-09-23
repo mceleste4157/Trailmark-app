@@ -1,10 +1,8 @@
 package com.mceleste.trailmark
 
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Path
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -29,6 +27,9 @@ import androidx.car.app.model.CarText
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
+import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.snapshotter.MapSnapshotter
 import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
@@ -39,6 +40,10 @@ class NavigationScreen(carContext: CarContext, private val selectedRoute: Trailm
     private val locationService = LocationService(carContext, ::handleFix)
 
     private var surface: SurfaceContainer? = null
+    private var snapshotter: MapSnapshotter? = null
+    private var snapshotInProgress = false
+    private var snapshotPending = false
+    private var snapshotGeneration = 0L
     private var navigationActive = false
     private var autoDriveIndex = 0
     private val autoDriveRunnable = object : Runnable {
@@ -99,7 +104,14 @@ class NavigationScreen(carContext: CarContext, private val selectedRoute: Trailm
                 }
 
                 override fun onSurfaceDestroyed(surfaceContainer: SurfaceContainer) {
-                    if (surface === surfaceContainer) surface = null
+                    if (surface === surfaceContainer) {
+                        surface = null
+                        snapshotGeneration++
+                        snapshotter?.cancel()
+                        snapshotter = null
+                        snapshotInProgress = false
+                        snapshotPending = false
+                    }
                 }
             })
     }
@@ -159,6 +171,11 @@ class NavigationScreen(carContext: CarContext, private val selectedRoute: Trailm
 
     private fun finishNavigation(clearState: Boolean) {
         mainHandler.removeCallbacks(autoDriveRunnable)
+        snapshotGeneration++
+        snapshotter?.cancel()
+        snapshotter = null
+        snapshotInProgress = false
+        snapshotPending = false
         locationService.stop()
         carContext.stopService(Intent(carContext, NavigationForegroundService::class.java))
         if (navigationActive) {
@@ -239,32 +256,64 @@ class NavigationScreen(carContext: CarContext, private val selectedRoute: Trailm
 
     private fun redrawSurface() {
         val container = surface ?: return
-        val s = container.surface ?: return
-        val canvas: Canvas = try {
-            s.lockCanvas(null) ?: return
-        } catch (_: Exception) {
+        if (container.surface == null || container.width <= 0 || container.height <= 0) return
+        if (snapshotInProgress) {
+            snapshotPending = true
             return
         }
 
+        val fix = follower.state.currentFix
+        val options = MapSnapshotter.Options(container.width, container.height)
+            .withPixelRatio((container.dpi / 160f).coerceAtLeast(1f))
+            .withStyleBuilder(TrailmarkMapStyle.builder(selectedRoute, fix))
+            .withLogo(false)
+            .withAttribution(false)
+
+        if (fix == null) {
+            options.withRegion(TrailmarkMapStyle.bounds(selectedRoute))
+                .withPadding(64, 64, 64, 64)
+        } else {
+            options.withCameraPosition(
+                CameraPosition.Builder()
+                    .target(LatLng(fix.latitude, fix.longitude))
+                    .bearing(fix.bearingDeg ?: 0.0)
+                    .zoom(NAVIGATION_ZOOM)
+                    .tilt(NAVIGATION_TILT)
+                    .build()
+            )
+        }
+
+        snapshotInProgress = true
+        snapshotPending = false
+        val generation = ++snapshotGeneration
+        snapshotter = MapSnapshotter(carContext, options).also { renderer ->
+            renderer.start(
+                { snapshot -> completeSnapshot(generation, snapshot.bitmap) },
+                { completeSnapshot(generation, null) }
+            )
+        }
+    }
+
+    private fun completeSnapshot(generation: Long, bitmap: Bitmap?) {
+        if (generation != snapshotGeneration) return
+        if (bitmap != null) drawSnapshot(bitmap)
+        snapshotter = null
+        snapshotInProgress = false
+        if (snapshotPending && navigationActive) redrawSurface()
+    }
+
+    private fun drawSnapshot(bitmap: Bitmap) {
+        val target = surface?.surface ?: return
+        if (!target.isValid) return
+        val canvas = try {
+            target.lockCanvas(null) ?: return
+        } catch (_: Exception) {
+            return
+        }
         try {
-            canvas.drawColor(Color.rgb(20, 24, 28))
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.WHITE
-                style = Paint.Style.STROKE
-                strokeWidth = 8f
-            }
-            val r = selectedRoute
-            if (r.points.isNotEmpty()) {
-                val path = Path()
-                r.points.forEachIndexed { index, p ->
-                    val x = 100f + index * 20f
-                    val y = 250f + kotlin.math.sin(index / 5.0).toFloat() * 80f + 300f
-                    if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                }
-                canvas.drawPath(path, paint)
-            }
+            canvas.drawBitmap(bitmap, null, Rect(0, 0, canvas.width, canvas.height), null)
         } finally {
-            s.unlockCanvasAndPost(canvas)
+            target.unlockCanvasAndPost(canvas)
         }
     }
 
@@ -272,5 +321,7 @@ class NavigationScreen(carContext: CarContext, private val selectedRoute: Trailm
         private const val AUTO_DRIVE_SPEED_MPS = 5.0
         private const val AUTO_DRIVE_INTERVAL_MS = 1000L
         private const val AUTO_DRIVE_MAX_STEPS = 60
+        private const val NAVIGATION_ZOOM = 15.5
+        private const val NAVIGATION_TILT = 45.0
     }
 }
