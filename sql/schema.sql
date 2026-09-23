@@ -621,6 +621,42 @@ create policy "anyone can report an error"
   on error_reports for insert
   with check (true);
 
+-- ---------- Global community trails (anonymous, app-wide) ----------
+-- Every trail you actually record (GPS "Go & Track", not a tapped-out
+-- planned route — see js/app.js's stop-recording handler) is contributed
+-- here automatically, building out real trail coverage across the whole
+-- app over time as more people drive. Unlike shared_trails (crew-only,
+-- attributed to whoever created it), this has NO user/creator column at
+-- all — not hidden, not nullable, just never collected — so there's
+-- nothing to deanonymize even by an admin query. Readable by everyone,
+-- signed in or not, since the point is for this to actually build out
+-- coverage app-wide rather than stay locked behind an account.
+-- Writes still require being signed in (not a specific crew group, any
+-- account) — a mild deterrent against drive-by spam given the anon key
+-- is public, since the data itself carries no identity to punish.
+-- No delete policy for anyone, including the row's own contributor —
+-- there's no owner to check. Remove a bad entry directly from the
+-- Supabase Table Editor (bypasses RLS as the project owner), same as
+-- error_reports above.
+create table if not exists global_trails (
+  id uuid primary key default uuid_generate_v4(),
+  points jsonb not null, -- [{lat, lng, ele, t}, ...] — same shape as shared_trails.points
+  distance_meters double precision,
+  created_at timestamptz not null default now()
+);
+
+alter table global_trails enable row level security;
+
+drop policy if exists "anyone can read global trails" on global_trails;
+create policy "anyone can read global trails"
+  on global_trails for select
+  using (true);
+
+drop policy if exists "authenticated users can contribute global trails" on global_trails;
+create policy "authenticated users can contribute global trails"
+  on global_trails for insert
+  with check (auth.role() = 'authenticated');
+
 -- ---------- Migrate existing FKs to reference profiles(id) ----------
 -- If these tables already existed (created before the `references
 -- profiles(id)` change above), their user/creator column still points at

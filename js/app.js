@@ -662,6 +662,61 @@ async function toggleCellTowers() {
   }
 }
 
+// ---------- Community trails (anonymous, app-wide — see GroupBackend's
+// contributeGlobalTrail/listGlobalTrails and sql/schema.sql's
+// global_trails table) ----------
+let communityTrailsOn = false;
+const COMMUNITY_TRAILS_SOURCE_ID = "community-trails";
+
+async function refreshCommunityTrailsLayer() {
+  const trails = await GroupBackend.listGlobalTrails();
+  const geojson = {
+    type: "FeatureCollection",
+    features: trails
+      .filter((t) => Array.isArray(t.points) && t.points.length >= 2)
+      .map((t) => ({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: t.points.map((p) => [p.lng, p.lat]) },
+      })),
+  };
+  if (map.getSource(COMMUNITY_TRAILS_SOURCE_ID)) {
+    map.getSource(COMMUNITY_TRAILS_SOURCE_ID).setData(geojson);
+  } else {
+    map.addSource(COMMUNITY_TRAILS_SOURCE_ID, { type: "geojson", data: geojson });
+    map.addLayer({
+      id: COMMUNITY_TRAILS_SOURCE_ID,
+      type: "line",
+      source: COMMUNITY_TRAILS_SOURCE_ID,
+      layout: { "line-join": "round", "line-cap": "round" },
+      paint: { "line-color": "#c2410c", "line-width": 2.5, "line-opacity": 0.55, "line-dasharray": [2, 1.5] },
+    });
+  }
+}
+
+async function toggleCommunityTrails() {
+  if (!GroupBackend.enabled) {
+    alert("Community trails aren't set up yet — see js/group/config.js in the repo.");
+    return;
+  }
+  if (!navigator.onLine && !communityTrailsOn) {
+    alert("Community trails need an internet connection.");
+    return;
+  }
+  communityTrailsOn = !communityTrailsOn;
+  if (!communityTrailsOn) {
+    if (map.getLayer(COMMUNITY_TRAILS_SOURCE_ID)) map.removeLayer(COMMUNITY_TRAILS_SOURCE_ID);
+    if (map.getSource(COMMUNITY_TRAILS_SOURCE_ID)) map.removeSource(COMMUNITY_TRAILS_SOURCE_ID);
+    return;
+  }
+  try {
+    await refreshCommunityTrailsLayer();
+  } catch (err) {
+    alert("Could not load community trails: " + err.message);
+    communityTrailsOn = false;
+  }
+}
+
 document.getElementById("btn-settings")?.addEventListener("click", openSettingsPanel);
 
 let trailSourceCounter = 0;
@@ -1454,6 +1509,14 @@ document.getElementById("btn-stop-recording").addEventListener("click", async ()
   });
   syncPersonalData().catch(() => {});
   backfillAndSaveTrailElevation(savedTrailId);
+  // Anonymous, app-wide contribution to the community trail layer — a
+  // real GPS-recorded ride (not a tapped-out planned route), no name or
+  // account attached, just the path. Requires being signed in (RLS), so
+  // skip the call entirely rather than let it fail loudly for a signed-
+  // out recording.
+  if (GroupBackend.enabled && session) {
+    GroupBackend.contributeGlobalTrail({ points: result.points, distanceMeters: result.distanceMeters }).catch(() => {});
+  }
 
   if (liveTrailSourceId) {
     map.removeLayer(liveTrailSourceId);
@@ -3327,6 +3390,13 @@ async function openLayersPanel() {
       </button>`
           : ""
       }
+      ${
+        GroupBackend.enabled
+          ? `<button class="tools-grid-btn" id="layers-community-btn">
+        <span class="tools-grid-icon${communityTrailsOn ? " active" : ""}">🥾</span><span>Community Trails</span>
+      </button>`
+          : ""
+      }
     </div>
     `
   );
@@ -3340,6 +3410,10 @@ async function openLayersPanel() {
   });
   document.getElementById("layers-cell-btn")?.addEventListener("click", async () => {
     await toggleCellTowers();
+    openLayersPanel();
+  });
+  document.getElementById("layers-community-btn")?.addEventListener("click", async () => {
+    await toggleCommunityTrails();
     openLayersPanel();
   });
 }

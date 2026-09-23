@@ -32,6 +32,8 @@ const GroupBackend = (() => {
       setTrailRating: disabled,
       setTrailDifficulty: disabled,
       listTrails: disabled,
+      contributeGlobalTrail: disabled,
+      listGlobalTrails: disabled,
       assignWaypointFolder: disabled,
       assignTrailFolder: disabled,
       uploadPhoto: disabled,
@@ -260,6 +262,25 @@ const GroupBackend = (() => {
 
   async function listTrails() {
     const { data, error } = await client.from("shared_trails").select().order("created_at", { ascending: false });
+    if (error) throw error;
+    return data;
+  }
+
+  // ---------- Global community trails (anonymous, app-wide — distinct
+  // from shared_trails, which is crew-only and attributed) ----------
+  // Reading these doesn't need to be signed in (RLS allows anyone), so
+  // this doesn't go through currentUserId()/currentGroupId() at all —
+  // contributing does still require a session, enforced by RLS
+  // (auth.role() = 'authenticated'), which throws a normal Postgres
+  // error here if called signed out; callers only call this once a
+  // trail's already being saved while signed in.
+  async function contributeGlobalTrail({ points, distanceMeters }) {
+    const { error } = await client.from("global_trails").insert({ points, distance_meters: distanceMeters });
+    if (error) throw error;
+  }
+
+  async function listGlobalTrails() {
+    const { data, error } = await client.from("global_trails").select("id, points, distance_meters");
     if (error) throw error;
     return data;
   }
@@ -586,6 +607,8 @@ const GroupBackend = (() => {
     setTrailRating,
     setTrailDifficulty,
     listTrails,
+    contributeGlobalTrail,
+    listGlobalTrails,
     assignWaypointFolder,
     assignTrailFolder,
     uploadPhoto,
