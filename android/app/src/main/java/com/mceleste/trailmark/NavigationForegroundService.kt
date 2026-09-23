@@ -3,19 +3,29 @@ package com.mceleste.trailmark
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import androidx.car.app.notification.CarAppExtender
+import androidx.core.app.NotificationCompat
 
 class NavigationForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         ensureChannel()
-        startForeground(NOTIFICATION_ID, notification())
+        startForeground(NOTIFICATION_ID, notification("Trail navigation is active"))
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val instruction = intent?.getStringExtra(EXTRA_INSTRUCTION) ?: "Trail navigation is active"
+        getSystemService(NotificationManager::class.java).notify(
+            NOTIFICATION_ID,
+            notification(instruction)
+        )
+        return START_STICKY
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -31,23 +41,35 @@ class NavigationForegroundService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    private fun notification(): Notification {
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID)
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-        }
-        return builder
+    private fun notification(instruction: String): Notification {
+        val contentIntent = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val carExtender = CarAppExtender.Builder()
+            .setContentTitle("Trailmark navigation")
+            .setContentText(instruction)
+            .setSmallIcon(R.drawable.ic_trailmark)
+            .setContentIntent(contentIntent)
+            .setChannelId(CHANNEL_ID)
+            .build()
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_trailmark)
             .setContentTitle("Trailmark navigation")
-            .setContentText("Trail navigation is active")
+            .setContentText(instruction)
+            .setContentIntent(contentIntent)
+            .setCategory("navigation")
             .setOngoing(true)
+            .extend(carExtender)
             .build()
     }
 
     companion object {
         private const val CHANNEL_ID = "trailmark_navigation"
         private const val NOTIFICATION_ID = 1001
+        const val EXTRA_INSTRUCTION = "trailmark.navigation.INSTRUCTION"
     }
 }

@@ -86,6 +86,13 @@ Phone-only editing and complex trail management stay on the iPhone.
 
 The Android app will expose the same navigation state through Android for Cars App Library navigation templates. The vehicle UI should mirror the CarPlay information architecture while following Android Auto's template and driver-distraction requirements.
 
+During active navigation, `NavigationScreen` owns the Android Auto navigation
+lifecycle. It publishes step and destination estimates through
+`NavigationManager`, responds to host stop requests, updates an extended car
+navigation notification, and can simulate progress along route geometry when
+the host enables test-drive mode. Assistant/Gemini `geo:` navigation intents
+are routed to the saved-route picker, with matching route names prioritized.
+
 ## Initial implementation sequence
 
 1. Create native project shells and the shared navigation contract.

@@ -14,6 +14,10 @@ Native Android foundation for Trailmark's Android Auto navigation client.
 - Android Auto route picker using `ListTemplate`.
 - Supabase-backed saved route loading with SQLite offline fallback.
 - Foreground service wrapper while Android Auto trail navigation is active.
+- Android Auto `NavigationManager` lifecycle and trip metadata.
+- Navigation-intent handling for Assistant/Gemini destination requests.
+- Review/test-drive simulation through `onAutoDriveEnabled`.
+- Turn-by-turn navigation notifications with `CarAppExtender`.
 
 Google's current documentation requires navigation apps to declare the navigation template permission and the navigation app category. Android Auto discovery also requires the automotive app descriptor.
 
@@ -22,7 +26,18 @@ Google's current documentation requires navigation apps to declare the navigatio
 Open the `android/` directory in Android Studio and let Gradle sync. From the repository root you can also run:
 
 ```
-gradle -p android assembleDebug
+./android/gradlew -p android assembleDebug
+```
+
+The phone app guides the user through foreground location, notification, and
+all-the-time location setup. Android 11 and newer require all-the-time location
+to be enabled from the app's system settings before Android Auto can start a
+location foreground service while the phone UI is in the background.
+
+To trigger Android Auto's review simulation while navigation is active:
+
+```
+adb shell dumpsys activity service com.mceleste.trailmark/.TrailmarkCarAppService AUTO_DRIVE
 ```
 
 ## Current limitation
@@ -35,8 +50,8 @@ Map tiles should eventually be rendered from a native offline-capable map source
 
 ## Production requirements
 
-- Request runtime location permissions.
 - Validate foreground-service notification and location behavior on Android 13+ and Android Auto hardware.
-- Replace the development host validator with the production validator before release.
+- Verify the release host allowlist against current production Android Auto hosts.
+- Add native offline map tiles and replace the development route surface.
 - Test with Android Auto Desktop Head Unit and real compatible head units.
 - Complete Google's navigation-app review/distribution requirements.

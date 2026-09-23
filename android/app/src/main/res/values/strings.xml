@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="email">Email</string>
+    <string name="password">Password</string>
+    <string name="sign_in">Sign In</string>
+    <string name="grant_navigation_permissions">Grant Navigation Permissions</string>
+    <string name="location_ready">Location ready</string>
+    <string name="location_permission_needed">Location permission needed</string>
+    <string name="background_location_ready">background ready</string>
+    <string name="background_location_needed">enable all-the-time location in Settings</string>
+    <string name="notifications_ready">notifications ready</string>
+    <string name="notification_permission_needed">notification permission needed</string>
+    <string name="permission_status">%1$s; %2$s; %3$s.</string>
+</resources>

@@ -11,9 +11,13 @@ import androidx.car.app.model.ListTemplate
 import androidx.car.app.model.MessageTemplate
 import androidx.car.app.model.Row
 import androidx.car.app.model.Template
+import java.util.Locale
 import kotlin.concurrent.thread
 
-class RouteSelectionScreen(carContext: CarContext) : Screen(carContext) {
+class RouteSelectionScreen(
+    carContext: CarContext,
+    private var requestedDestination: String? = null
+) : Screen(carContext) {
     private var routes: List<TrailmarkRoute> = emptyList()
     private var isLoading = true
     private var loadError: String? = null
@@ -55,7 +59,7 @@ class RouteSelectionScreen(carContext: CarContext) : Screen(carContext) {
         }
 
         return ListTemplate.Builder()
-            .setTitle("Trailmark Routes")
+            .setTitle(requestedDestination?.let { "Routes for $it" } ?: "Trailmark Routes")
             .setSingleList(list.build())
             .setActionStrip(ActionStrip.Builder()
                 .addAction(Action.APP_ICON)
@@ -65,6 +69,12 @@ class RouteSelectionScreen(carContext: CarContext) : Screen(carContext) {
                     .build())
                 .build())
             .build()
+    }
+
+    fun showRequestedDestination(destination: String) {
+        requestedDestination = destination
+        routes = prioritizeRequestedRoute(routes, destination)
+        invalidate()
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -82,7 +92,7 @@ class RouteSelectionScreen(carContext: CarContext) : Screen(carContext) {
             try {
                 val fetched = RouteRepository(carContext).fetchRoutes()
                 mainHandler.post {
-                    routes = fetched
+                    routes = requestedDestination?.let { prioritizeRequestedRoute(fetched, it) } ?: fetched
                     loadError = null
                     isLoading = false
                     invalidate()
@@ -100,6 +110,13 @@ class RouteSelectionScreen(carContext: CarContext) : Screen(carContext) {
 
     private fun routeSummary(route: TrailmarkRoute): String {
         val miles = route.distanceMeters / 1609.344
-        return "${route.points.size} points - ${String.format("%.1f", miles)} mi"
+        return "${route.points.size} points - ${String.format(Locale.getDefault(), "%.1f", miles)} mi"
+    }
+
+    private fun prioritizeRequestedRoute(
+        candidates: List<TrailmarkRoute>,
+        destination: String
+    ): List<TrailmarkRoute> = candidates.sortedByDescending {
+        it.name.contains(destination, ignoreCase = true)
     }
 }
