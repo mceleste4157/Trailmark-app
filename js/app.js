@@ -695,15 +695,18 @@ function closePanel() {
 document.getElementById("panel-close").addEventListener("click", closePanel);
 
 // ---------- Version history ----------
-const btnVersion = document.getElementById("btn-version");
+// Now shown inside Settings (not its own topbar button) — see
+// openSettingsPanel(), which renders currentVersionText and wires up
+// openVersionHistoryPanel() each time it draws.
+let currentVersionText = "";
 fetch("version.json", { cache: "no-store" })
   .then((res) => res.json())
   .then((data) => {
-    btnVersion.textContent = `v${data.current}`;
+    currentVersionText = `v${data.current}`;
   })
   .catch(() => {});
 
-btnVersion.addEventListener("click", async () => {
+async function openVersionHistoryPanel() {
   let data;
   try {
     const res = await fetch("version.json", { cache: "no-store" });
@@ -724,7 +727,7 @@ btnVersion.addEventListener("click", async () => {
     )
     .join("");
   openPanel(`Version history — current v${escHtml(data.current)}`, rows || "<p>No history yet.</p>");
-});
+}
 
 // Minimal escaping for any user-entered text we inject into innerHTML.
 function escHtml(str) {
@@ -3829,12 +3832,32 @@ async function openGroupPanel() {
 // Settings: everything that isn't chat itself — trip folders and account
 // sign in/out. Split out from the Chat panel (which used to carry all of
 // this) so Chat stays focused on just messaging.
+// Shared "region-item" row shown at the bottom of every Settings-panel
+// state (signed in, signed out, or crew features unconfigured) — the
+// version number used to live as its own topbar button next to the app
+// title; both were removed to free up topbar space, with the version
+// display (and its "view history" action) moved in here instead.
+function versionRowHtml() {
+  return `
+    <div class="region-item" id="version-row">
+      <div><div>Trailmark</div><small>${escHtml(currentVersionText || "…")}</small></div>
+      <button class="pill-btn" id="version-history-btn">History</button>
+    </div>
+  `;
+}
+function wireVersionRow() {
+  const btn = document.getElementById("version-history-btn");
+  if (btn) btn.addEventListener("click", openVersionHistoryPanel);
+}
+
 async function openSettingsPanel() {
   if (!GroupBackend.enabled) {
     openPanel(
       "Settings",
-      `<p style="color:var(--text-dim);font-size:13px;">Crew features aren't set up yet — see js/group/config.js in the repo.</p>`
+      `<p style="color:var(--text-dim);font-size:13px;">Crew features aren't set up yet — see js/group/config.js in the repo.</p>
+      ${versionRowHtml()}`
     );
+    wireVersionRow();
     return;
   }
   if (!session) {
@@ -3853,6 +3876,7 @@ async function openSettingsPanel() {
     </div>
     <button class="primary" id="open-folders-btn" style="background:var(--panel);border:1px solid var(--accent-bright);margin-top:12px;">Trip Folders</button>
     <button class="primary" id="sign-out-btn" style="background:var(--panel);border:1px solid var(--border);">Sign Out</button>
+    ${versionRowHtml()}
     `
   );
   document.getElementById("open-folders-btn").addEventListener("click", openFoldersPanel);
@@ -3875,6 +3899,7 @@ async function openSettingsPanel() {
     deactivateSocial();
     closePanel();
   });
+  wireVersionRow();
 }
 
 function activateSocial() {
@@ -3943,11 +3968,13 @@ function renderAuthPanel(mode = "signin") {
       ${isSignup ? "Already have an account? Sign in" : "New here? Create an account"}
     </button>
     <p id="auth-error" style="color:var(--danger);font-size:13px;"></p>
+    ${versionRowHtml()}
     `
   );
   const showError = (err) => {
     document.getElementById("auth-error").textContent = err.message || String(err);
   };
+  wireVersionRow();
   document.getElementById("auth-switch-mode").addEventListener("click", () => renderAuthPanel(isSignup ? "signin" : "signup"));
   document.getElementById("auth-form").addEventListener("submit", async (e) => {
     e.preventDefault(); // this is an SPA — handle it in JS, but the submit event itself is what a browser's password manager watches for
@@ -4401,7 +4428,7 @@ errorBanner.addEventListener("click", async () => {
       stack: report.stack,
       url: location.href,
       userAgent: navigator.userAgent,
-      appVersion: btnVersion.textContent,
+      appVersion: currentVersionText,
     });
     alert("Thanks — that's been reported.");
   } catch (err) {

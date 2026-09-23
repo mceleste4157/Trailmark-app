@@ -165,17 +165,9 @@ html, body {
   z-index: 10;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   padding: 10px 14px;
   background: linear-gradient(to bottom, rgba(var(--bg-rgb), 0.9), rgba(var(--bg-rgb), 0));
   pointer-events: none;
-}
-
-#app-title {
-  font-weight: 700;
-  font-size: 18px;
-  letter-spacing: 0.02em;
-  pointer-events: auto;
 }
 
 #status-pill {
@@ -191,6 +183,12 @@ html, body {
 #status-pill.offline { color: var(--warn); border-color: var(--warn); }
 
 #topbar-right {
+  /* The app title/version used to sit to the left of this as a sibling
+     — now that it's gone (moved into Settings), this is #topbar's only
+     child, so it gets the full width to spread its own content across
+     via justify-content below instead of only ever being as wide as
+     its content demanded. */
+  width: 100%;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
