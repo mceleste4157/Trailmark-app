@@ -96,6 +96,38 @@ The phone activity and Android Auto surface both render the selected route with
 MapLibre Native. Before a GPS fix, the vehicle surface frames the route; during
 navigation it uses a centered, heading-up camera and overlays the current fix.
 
+## Crew groups and community trails
+
+The web app lets a signed-in user create or join a named, password-protected
+group so their crew can see each other's live location, chat, and shared
+waypoints/trails/photos (see sql/schema.sql's "Crew groups" section:
+create_group/join_group/leave_group/my_group are SECURITY DEFINER RPC
+functions, so the password is never readable client-side). It also
+anonymously contributes every GPS-recorded trail to a public, app-wide
+`global_trails` layer (no user/creator column at all).
+
+Both are ported to Android: `GroupRepository.kt` calls the same RPCs over
+plain REST, the bottom bar's Chat button opens a join/create/leave crew
+flow, `onLocationFix` broadcasts presence to the group every 15s, other
+members render as dots on the phone map, and a "Community Trails" item in
+the Layers menu renders `global_trails` as a line layer. Android doesn't
+record new trails itself (Go & Track centers the map rather than starting a
+GPS recording — routes come from Supabase/offline storage), so there's
+nothing for it to contribute, only display.
+
+iOS only gets crew groups, and only the presence half: `SupabaseGroups.swift`
+joins/creates/leaves a group from a section on the sign-in screen and
+broadcasts the signed-in device's own location to the group, but doesn't
+render other members or community trails — there's no phone map anywhere in
+the iOS app yet to draw either on (CarPlay's map is turn-by-turn only, not a
+place for crew dots or a static trail layer, per the distracted-driving
+reasoning below). Building a real iOS phone map is separate follow-up work.
+
+Chat itself (free-text messaging) is not ported to either native platform.
+It's phone-only on the web app already; a native equivalent is a real build
+(message list UI, input, persistence) with no existing native surface to
+extend, not a small addition — deferred rather than done partially.
+
 ## Initial implementation sequence
 
 1. Create native project shells and the shared navigation contract.
