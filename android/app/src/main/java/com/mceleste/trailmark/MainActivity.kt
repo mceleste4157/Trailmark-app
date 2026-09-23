@@ -37,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var connectivityView: TextView
     private lateinit var locationService: LocationService
     private lateinit var offlineMapManager: OfflineMapManager
+    private lateinit var groupRepository: GroupRepository
 
     private var map: MapLibreMap? = null
     private var routes: List<TrailmarkRoute> = emptyList()
@@ -46,6 +47,17 @@ class MainActivity : AppCompatActivity() {
     private var satelliteMode = false
     private var routeLayerVisible = true
     private var lightChrome = false
+
+    // Crew groups + community trails — see GroupRepository and
+    // sql/schema.sql's "Crew groups"/global_trails sections. currentGroup
+    // is refreshed on launch (if already signed in), after joining/
+    // creating/leaving a group, and drives whether onLocationFix
+    // broadcasts this device's position to the crew.
+    private var currentGroup: TrailmarkGroup? = null
+    private var crewLocations: List<CrewLocation> = emptyList()
+    private var communityTrails: List<GlobalTrail> = emptyList()
+    private var communityTrailsOn = false
+    private var lastCrewBroadcastAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,6 +71,7 @@ class MainActivity : AppCompatActivity() {
         elevationView = findViewById(R.id.stat_elevation)
         connectivityView = findViewById(R.id.connectivity_status)
         offlineMapManager = OfflineMapManager(this)
+        groupRepository = GroupRepository(this)
         locationService = LocationService(this, ::onLocationFix)
 
         mapView.onCreate(savedInstanceState)
@@ -69,6 +82,8 @@ class MainActivity : AppCompatActivity() {
                     if (routeLayerVisible) activeRoute else null,
                     latestFix,
                     satelliteMode,
+                    communityTrails,
+                    crewLocations,
                 ),
             ) {
                 statusView.setText(if (routes.isEmpty()) R.string.select_route else R.string.routes)
@@ -80,14 +95,15 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.tools_button).setOnClickListener { explainNavigationPermissions() }
         findViewById<View>(R.id.my_content_button).setOnClickListener { showRoutePicker() }
         findViewById<View>(R.id.offline_maps_button).setOnClickListener { confirmOfflineDownload() }
-        findViewById<View>(R.id.chat_button).setOnClickListener { showSetupMenu() }
+        findViewById<View>(R.id.chat_button).setOnClickListener { showCrewMenu() }
         findViewById<View>(R.id.account_button).setOnClickListener { showSetupMenu() }
         findViewById<View>(R.id.basemap_button).setOnClickListener { toggleBasemap() }
-        findViewById<View>(R.id.layers_button).setOnClickListener { toggleRouteLayer() }
+        findViewById<View>(R.id.layers_button).setOnClickListener { showLayersMenu() }
         findViewById<View>(R.id.weather_button).setOnClickListener { openWeather() }
         findViewById<View>(R.id.theme_button).setOnClickListener { toggleChromeTheme() }
 
         loadRoutes()
+        if (SupabaseAuth.token(this) != null) refreshMyGroup()
         if (!hasForegroundLocation()) requestForegroundLocation()
     }
 
@@ -249,6 +265,22 @@ class MainActivity : AppCompatActivity() {
             } ?: getString(R.string.elevation_unavailable)
             if (firstFix && activeRoute == null) centerMap()
         }
+        broadcastLocationToCrew(fix)
+    }
+
+    // Presence for the crew group (see GroupRepository.updateMyLocation) —
+    // a no-op unless signed in and currently in a group. Throttled the
+    // same way the web app's browser geolocation watch throttles its own
+    // upserts, so a GPS fix every second or two doesn't turn into a
+    // network call every second or two.
+    private fun broadcastLocationToCrew(fix: TrailmarkFix) {
+        val group = currentGroup ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastCrewBroadcastAt < 15_000) return
+        lastCrewBroadcastAt = now
+        thread(start = true, name = "trailmark-crew-broadcast") {
+            groupRepository.updateMyLocation(fix.latitude, fix.longitude, group.id)
+        }
     }
 
     private fun toggleBasemap() {
@@ -261,6 +293,8 @@ class MainActivity : AppCompatActivity() {
                 if (routeLayerVisible) activeRoute else null,
                 latestFix,
                 satelliteMode,
+                if (communityTrailsOn) communityTrails else emptyList(),
+                crewLocations,
             ),
         ) {
             activeRoute?.let(::showRoute)
@@ -273,6 +307,55 @@ class MainActivity : AppCompatActivity() {
             TrailmarkMapStyle.updateRoute(style, if (routeLayerVisible) activeRoute else null)
         }
         findViewById<View>(R.id.layers_button).alpha = if (routeLayerVisible) 1f else 0.55f
+    }
+
+    private fun showLayersMenu() {
+        // Unlike the web app, Android's Supabase URL/key are hardcoded in
+        // SupabaseAuth (no separate "not configured" state), so community
+        // trails is always offered here.
+        val labels = mutableListOf(getString(R.string.route_line), getString(R.string.community_trails))
+        val checked = mutableListOf(routeLayerVisible, communityTrailsOn)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.layers)
+            .setMultiChoiceItems(labels.toTypedArray(), checked.toBooleanArray()) { _, index, isChecked ->
+                when (index) {
+                    0 -> {
+                        if (isChecked != routeLayerVisible) toggleRouteLayer()
+                    }
+                    1 -> {
+                        if (isChecked != communityTrailsOn) toggleCommunityTrails()
+                    }
+                }
+            }
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
+    private fun toggleCommunityTrails() {
+        communityTrailsOn = !communityTrailsOn
+        if (!communityTrailsOn) {
+            map?.style?.let { TrailmarkMapStyle.updateCommunityTrails(it, emptyList()) }
+            return
+        }
+        if (communityTrails.isNotEmpty()) {
+            map?.style?.let { TrailmarkMapStyle.updateCommunityTrails(it, communityTrails) }
+            return
+        }
+        thread(start = true, name = "trailmark-community-trails-loader") {
+            val result = groupRepository.listGlobalTrails()
+            runOnUiThread {
+                result.fold(
+                    onSuccess = { trails ->
+                        communityTrails = trails
+                        map?.style?.let { TrailmarkMapStyle.updateCommunityTrails(it, trails) }
+                    },
+                    onFailure = {
+                        communityTrailsOn = false
+                        statusView.text = it.message ?: getString(R.string.community_trails_failed)
+                    }
+                )
+            }
+        }
     }
 
     private fun openWeather() {
@@ -367,7 +450,7 @@ class MainActivity : AppCompatActivity() {
     private fun showSetupMenu() {
         val signedIn = SupabaseAuth.token(this) != null
         val items = if (signedIn) {
-            arrayOf(getString(R.string.routes), getString(R.string.grant_navigation_permissions))
+            arrayOf(getString(R.string.routes), getString(R.string.grant_navigation_permissions), getString(R.string.sign_out))
         } else {
             arrayOf(getString(R.string.sign_in), getString(R.string.grant_navigation_permissions))
         }
@@ -377,10 +460,147 @@ class MainActivity : AppCompatActivity() {
                 when {
                     index == 0 && !signedIn -> showSignInDialog()
                     index == 0 -> loadRoutes()
+                    index == 2 -> signOut()
                     else -> explainNavigationPermissions()
                 }
             }
             .show()
+    }
+
+    private fun signOut() {
+        SupabaseAuth.signOut(this)
+        currentGroup = null
+        crewLocations = emptyList()
+        map?.style?.let { TrailmarkMapStyle.updateCrew(it, emptyList()) }
+        statusView.setText(R.string.signed_out)
+        loadRoutes()
+    }
+
+    // ---------- Crew groups (see GroupRepository + sql/schema.sql's
+    // "Crew groups" section) — reachable from the bottom bar's Chat
+    // button, since there's no dedicated messaging UI on the phone app
+    // yet (see docs/MOBILE_ARCHITECTURE.md's "phone-only" precedent for
+    // why that's deliberately not exposed on the CarPlay/Android Auto
+    // vehicle surface either way). This is presence + shared trails/
+    // routes only — "so you can see each other" — not chat.
+    private fun showCrewMenu() {
+        if (SupabaseAuth.token(this) == null) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.crew)
+                .setMessage(R.string.crew_requires_sign_in)
+                .setPositiveButton(R.string.sign_in) { _, _ -> showSignInDialog() }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+            return
+        }
+        val group = currentGroup
+        if (group == null) {
+            showJoinOrCreateGroupDialog()
+            return
+        }
+        val message = getString(R.string.crew_group_status, group.name, crewLocations.size)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.crew)
+            .setMessage(message)
+            .setPositiveButton(R.string.refresh) { _, _ -> refreshCrewLocations() }
+            .setNegativeButton(R.string.leave_group) { _, _ -> confirmLeaveGroup(group) }
+            .setNeutralButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun confirmLeaveGroup(group: TrailmarkGroup) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.leave_group)
+            .setMessage(getString(R.string.leave_group_confirm, group.name))
+            .setPositiveButton(R.string.leave_group) { _, _ ->
+                thread(start = true, name = "trailmark-leave-group") {
+                    val result = groupRepository.leaveGroup()
+                    runOnUiThread {
+                        result.onSuccess {
+                            currentGroup = null
+                            crewLocations = emptyList()
+                            map?.style?.let { TrailmarkMapStyle.updateCrew(it, emptyList()) }
+                        }
+                        result.onFailure { statusView.text = it.message ?: getString(R.string.crew_action_failed) }
+                    }
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun showJoinOrCreateGroupDialog() {
+        val name = EditText(this).apply { hint = getString(R.string.group_name) }
+        val password = EditText(this).apply {
+            hint = getString(R.string.group_password)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val padding = (20 * resources.displayMetrics.density).toInt()
+            setPadding(padding, 0, padding, 0)
+            addView(TextView(this@MainActivity).apply { text = getString(R.string.no_crew_group_yet) })
+            addView(name, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            addView(password, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.crew)
+            .setView(content)
+            .setPositiveButton(R.string.join_group) { _, _ ->
+                submitGroupAction(name.text.toString().trim(), password.text.toString(), join = true)
+            }
+            .setNeutralButton(R.string.create_group) { _, _ ->
+                submitGroupAction(name.text.toString().trim(), password.text.toString(), join = false)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun submitGroupAction(name: String, password: String, join: Boolean) {
+        if (name.isEmpty() || password.isEmpty()) {
+            statusView.setText(R.string.group_name_password_required)
+            return
+        }
+        statusView.setText(R.string.map_loading)
+        thread(start = true, name = "trailmark-group-action") {
+            val result = if (join) groupRepository.joinGroup(name, password) else groupRepository.createGroup(name, password)
+            runOnUiThread {
+                result.fold(
+                    onSuccess = { group ->
+                        currentGroup = group
+                        statusView.text = group?.name?.let { getString(R.string.joined_group, it) } ?: ""
+                        refreshCrewLocations()
+                    },
+                    onFailure = { statusView.text = it.message ?: getString(R.string.crew_action_failed) }
+                )
+            }
+        }
+    }
+
+    private fun refreshMyGroup() {
+        thread(start = true, name = "trailmark-my-group") {
+            val result = groupRepository.myGroup()
+            runOnUiThread {
+                result.onSuccess { group ->
+                    currentGroup = group
+                    if (group != null) refreshCrewLocations()
+                }
+            }
+        }
+    }
+
+    private fun refreshCrewLocations() {
+        val group = currentGroup ?: return
+        thread(start = true, name = "trailmark-crew-locations") {
+            val result = groupRepository.listCrewLocations()
+            runOnUiThread {
+                result.onSuccess { rows ->
+                    if (currentGroup?.id != group.id) return@onSuccess // group changed/left mid-request
+                    crewLocations = rows
+                    map?.style?.let { TrailmarkMapStyle.updateCrew(it, rows) }
+                }
+            }
+        }
     }
 
     private fun showSignInDialog() {

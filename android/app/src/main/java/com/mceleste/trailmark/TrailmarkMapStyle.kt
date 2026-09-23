@@ -41,17 +41,37 @@ object TrailmarkMapStyle {
     private const val LOCATION_LAYER = "trailmark-location"
     private const val LOCATION_ARROW_LAYER = "trailmark-location-arrow-layer"
     private const val LOCATION_ARROW_IMAGE = "trailmark-location-arrow"
+    private const val COMMUNITY_TRAILS_SOURCE = "trailmark-community-trails-source"
+    private const val COMMUNITY_TRAILS_LAYER = "trailmark-community-trails"
+    private const val CREW_SOURCE = "trailmark-crew-source"
+    private const val CREW_LAYER = "trailmark-crew"
 
-    fun builder(route: TrailmarkRoute?, fix: TrailmarkFix?, satellite: Boolean = false): Style.Builder {
+    fun builder(
+        route: TrailmarkRoute?,
+        fix: TrailmarkFix?,
+        satellite: Boolean = false,
+        communityTrails: List<GlobalTrail> = emptyList(),
+        crew: List<CrewLocation> = emptyList(),
+    ): Style.Builder {
         val builder = Style.Builder()
         if (satellite) builder.fromJson(SATELLITE_STYLE_JSON) else builder.fromUri(STYLE_URI)
         return builder
             .withSources(
+                // Added before the route/location sources so those (and
+                // their casings/arrow) draw on top of the community-trail
+                // backdrop and crew dots rather than being hidden under them.
+                GeoJsonSource(COMMUNITY_TRAILS_SOURCE, communityTrailsGeometry(communityTrails)),
+                GeoJsonSource(CREW_SOURCE, crewFeatures(crew)),
                 GeoJsonSource(ROUTE_SOURCE, routeGeometry(route)),
                 GeoJsonSource(LOCATION_SOURCE, locationFeature(fix))
             )
             .withImage(LOCATION_ARROW_IMAGE, locationArrow(), true)
             .withLayers(
+                LineLayer(COMMUNITY_TRAILS_LAYER, COMMUNITY_TRAILS_SOURCE).withProperties(
+                    lineColor(Color.rgb(194, 65, 12)),
+                    lineWidth(2.5f),
+                    lineOpacity(0.55f)
+                ),
                 LineLayer(ROUTE_CASING_LAYER, ROUTE_SOURCE).withProperties(
                     lineColor(Color.WHITE),
                     lineWidth(10f),
@@ -61,6 +81,12 @@ object TrailmarkMapStyle {
                     lineColor(Color.rgb(220, 55, 45)),
                     lineWidth(6f),
                     lineOpacity(1f)
+                ),
+                CircleLayer(CREW_LAYER, CREW_SOURCE).withProperties(
+                    circleRadius(8f),
+                    circleColor(Color.rgb(34, 197, 94)),
+                    circleStrokeColor(Color.WHITE),
+                    circleStrokeWidth(2f)
                 ),
                 CircleLayer(LOCATION_HALO_LAYER, LOCATION_SOURCE).withProperties(
                     circleRadius(14f),
@@ -88,6 +114,32 @@ object TrailmarkMapStyle {
 
     fun updateLocation(style: Style, fix: TrailmarkFix?) {
         style.getSourceAs<GeoJsonSource>(LOCATION_SOURCE)?.setGeoJson(locationFeature(fix))
+    }
+
+    fun updateCommunityTrails(style: Style, trails: List<GlobalTrail>) {
+        style.getSourceAs<GeoJsonSource>(COMMUNITY_TRAILS_SOURCE)?.setGeoJson(communityTrailsGeometry(trails))
+    }
+
+    fun updateCrew(style: Style, crew: List<CrewLocation>) {
+        style.getSourceAs<GeoJsonSource>(CREW_SOURCE)?.setGeoJson(crewFeatures(crew))
+    }
+
+    private fun communityTrailsGeometry(trails: List<GlobalTrail>): FeatureCollection {
+        if (trails.isEmpty()) return FeatureCollection.fromFeatures(arrayOf<Feature>())
+        val features = trails.map { trail ->
+            Feature.fromGeometry(LineString.fromLngLats(trail.points.map { Point.fromLngLat(it.longitude, it.latitude) }))
+        }
+        return FeatureCollection.fromFeatures(features)
+    }
+
+    private fun crewFeatures(crew: List<CrewLocation>): FeatureCollection {
+        if (crew.isEmpty()) return FeatureCollection.fromFeatures(arrayOf<Feature>())
+        val features = crew.map { member ->
+            val feature = Feature.fromGeometry(Point.fromLngLat(member.longitude, member.latitude))
+            feature.addStringProperty("displayName", member.displayName)
+            feature
+        }
+        return FeatureCollection.fromFeatures(features)
     }
 
     fun bounds(route: TrailmarkRoute): LatLngBounds {

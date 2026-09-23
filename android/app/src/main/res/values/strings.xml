@@ -51,4 +51,23 @@
     <string name="download">Download</string>
     <string name="selected_route">%1$s · %2$.1f mi</string>
     <string name="location_permission_explanation">Trailmark needs precise location for trail navigation. Enable all-the-time location for Android Auto navigation while the phone screen is off.</string>
+    <string name="sign_out">Sign Out</string>
+    <string name="signed_out">Signed out.</string>
+    <string name="route_line">Route Line</string>
+    <string name="community_trails">Community Trails</string>
+    <string name="community_trails_failed">Could not load community trails.</string>
+    <string name="crew">Crew</string>
+    <string name="crew_requires_sign_in">Sign in to join or create a crew group and see each other\'s live location.</string>
+    <string name="no_crew_group_yet">No crew group yet — join with a name + password your crew shares, or start a new one.</string>
+    <string name="group_name">Group name</string>
+    <string name="group_password">Group password (at least 4 characters)</string>
+    <string name="join_group">Join</string>
+    <string name="create_group">Create New</string>
+    <string name="group_name_password_required">Group name and password are both required.</string>
+    <string name="joined_group">Joined %1$s</string>
+    <string name="crew_group_status">%1$s · %2$d other rider(s) visible</string>
+    <string name="refresh">Refresh</string>
+    <string name="leave_group">Leave Group</string>
+    <string name="leave_group_confirm">Leave \"%1$s\"? You\'ll stop seeing this crew until you rejoin.</string>
+    <string name="crew_action_failed">Something went wrong — try again.</string>
 </resources>
