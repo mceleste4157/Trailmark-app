@@ -115,13 +115,13 @@ record new trails itself (Go & Track centers the map rather than starting a
 GPS recording — routes come from Supabase/offline storage), so there's
 nothing for it to contribute, only display.
 
-iOS only gets crew groups, and only the presence half: `SupabaseGroups.swift`
-joins/creates/leaves a group from a section on the sign-in screen and
-broadcasts the signed-in device's own location to the group, but doesn't
-render other members or community trails — there's no phone map anywhere in
-the iOS app yet to draw either on (CarPlay's map is turn-by-turn only, not a
-place for crew dots or a static trail layer, per the distracted-driving
-reasoning below). Building a real iOS phone map is separate follow-up work.
+iOS includes a native MapKit phone map with the Trailmark top controls, live
+location stats, saved-route geometry, route selection, account access, crew
+management, and the same five-item bottom navigation used by Android. Crew
+membership and this device's presence broadcast are implemented through
+`SupabaseGroups.swift`. Rendering other crew members and community trails on
+the iOS map remains follow-up work; CarPlay stays focused on turn-by-turn
+navigation and does not show those collaborative overlays.
 
 Chat itself (free-text messaging) is not ported to either native platform.
 It's phone-only on the web app already; a native equivalent is a real build
