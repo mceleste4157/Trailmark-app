@@ -16,12 +16,19 @@ Apple's navigation integration requires a navigation entitlement and a CarPlay s
 
 ## Xcode setup
 
-1. Create an iOS App target named `Trailmark` in Xcode, or add these source files to an existing native target.
-2. Use bundle identifier `com.mceleste.trailmark` (or your own registered identifier).
-3. Add the CarPlay capability/navigation entitlement through **Signing & Capabilities**. Apple approval is required for the production navigation entitlement.
-4. Add the location usage strings and background location mode from `Info.plist`.
-5. Add the CarPlay scene configuration from `Info.plist`.
-6. Sign with your Apple Developer team.
+The project is generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen) from `project.yml` — `Trailmark.xcodeproj` itself is gitignored and not committed, so you regenerate it locally rather than opening a checked-in project file.
+
+1. `brew install xcodegen` (one-time).
+2. `cd ios && xcodegen generate` — creates `Trailmark.xcodeproj`.
+3. Open `Trailmark.xcodeproj`, or build from the command line:
+   ```
+   xcodebuild -project Trailmark.xcodeproj -scheme Trailmark \
+     -destination "generic/platform=iOS Simulator" CODE_SIGNING_ALLOWED=NO build
+   ```
+4. To run on a real device or in CarPlay, set `DEVELOPMENT_TEAM` in `project.yml`'s `settings.base` (or in Xcode's Signing & Capabilities) to your Apple Developer team, then regenerate.
+5. The navigation entitlement (`com.apple.developer.navigation-app` in `Trailmark/Trailmark.entitlements`) and the CarPlay scene manifest (in `Trailmark/Info.plist`) are already wired up — Apple's own approval of the production navigation entitlement is still required before it works on a real device/vehicle.
+
+`Trailmark/Info.plist` and `Trailmark/Trailmark.entitlements` are hand-authored and read as-is by the build (`INFOPLIST_FILE`/`CODE_SIGN_ENTITLEMENTS` in `project.yml`) — `project.yml` intentionally has no top-level `info:`/`entitlements:` blocks, since those tell XcodeGen to *generate* those files' content itself (from an `info.properties` dict) and would silently overwrite the location-permission strings, background mode, and CarPlay scene manifest on every `xcodegen generate`.
 
 ## Current limitation
 

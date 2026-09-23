@@ -2,8 +2,10 @@ name: Trailmark
 
 options:
   bundleIdPrefix: com.mceleste
+  # 17.4, not 17.0: CPManeuver.maneuverType (used by NavigationScreen's
+  # CarPlay maneuver updates) only exists from iOS 17.4 onward.
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "17.4"
 
 settings:
   base:
@@ -20,10 +22,14 @@ targets:
         excludes:
           - Info.plist
           - Trailmark.entitlements
-    info:
-      path: Trailmark/Info.plist
-    entitlements:
-      path: Trailmark/Trailmark.entitlements
+    # No top-level `info:`/`entitlements:` blocks here on purpose: those
+    # tell XcodeGen to GENERATE the plist/entitlements content itself
+    # (from an `info.properties`/`entitlements.properties` dict), which
+    # silently overwrote the hand-authored location-permission strings,
+    # background mode, CarPlay scene manifest, and navigation-app
+    # entitlement the first time `xcodegen generate` ran. The
+    # INFOPLIST_FILE / CODE_SIGN_ENTITLEMENTS settings below just point
+    # the build at the existing files without XcodeGen touching them.
     settings:
       base:
         PRODUCT_NAME: Trailmark

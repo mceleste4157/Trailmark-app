@@ -1,5 +1,6 @@
 import UIKit
 import CarPlay
+import CoreLocation
 import MapKit
 import Combine
 
@@ -94,8 +95,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 }
             } catch {
                 let alert = CPAlertTemplate(
-                    title: "Trailmark",
-                    message: error.localizedDescription,
+                    titleVariants: ["Trailmark: \(error.localizedDescription)"],
                     actions: [CPAlertAction(title: "OK", style: .default, handler: { _ in })]
                 )
                 await MainActor.run {
@@ -109,42 +109,32 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         guard let mapTemplate else { return }
 
         let originFix = location.lastFix
-        let originPoint = originFix.map {
-            CPLocationCoordinate3D(latitude: $0.latitude, longitude: $0.longitude, altitude: $0.altitudeM ?? 0)
-        } ?? CPLocationCoordinate3D(
+        let originCoordinate = originFix.map {
+            CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+        } ?? CLLocationCoordinate2D(
             latitude: route.points[0].latitude,
-            longitude: route.points[0].longitude,
-            altitude: route.points[0].altitudeM ?? 0
+            longitude: route.points[0].longitude
         )
-        let destinationPoint = CPLocationCoordinate3D(
+        let destinationCoordinate = CLLocationCoordinate2D(
             latitude: route.points.last!.latitude,
-            longitude: route.points.last!.longitude,
-            altitude: route.points.last!.altitudeM ?? 0
+            longitude: route.points.last!.longitude
         )
 
-        let origin = CPNavigationWaypoint(
-            centerPoint: originPoint,
-            locationThreshold: Measurement(value: 30, unit: .meters),
-            name: "Current location",
-            address: nil,
-            entryPoints: [],
-            timeZone: nil
-        )
-        let destination = CPNavigationWaypoint(
-            centerPoint: destinationPoint,
-            locationThreshold: Measurement(value: 30, unit: .meters),
-            name: route.name,
-            address: nil,
-            entryPoints: [],
-            timeZone: nil
-        )
+        // CPNavigationWaypoint/CPTrip(originWaypoint:destinationWaypoint:) is
+        // gated to iOS 26.4+ on current SDKs — this app's deployment target
+        // is 17.x, so trip origin/destination use the long-stable
+        // MKMapItem-based CPTrip initializer instead.
+        let originItem = MKMapItem(placemark: MKPlacemark(coordinate: originCoordinate))
+        originItem.name = "Current location"
+        let destinationItem = MKMapItem(placemark: MKPlacemark(coordinate: destinationCoordinate))
+        destinationItem.name = route.name
 
         let choice = CPRouteChoice(
             summaryVariants: [route.name],
             additionalInformationVariants: ["Trailmark route"],
             selectionSummaryVariants: ["Start \(route.name)"]
         )
-        let trip = CPTrip(originWaypoint: origin, destinationWaypoint: destination, routeChoices: [choice])
+        let trip = CPTrip(origin: originItem, destination: destinationItem, routeChoices: [choice])
         trip.userInfo = route.id
 
         mapTemplate.showTripPreviews([trip], textConfiguration: nil)
@@ -203,7 +193,7 @@ extension CarPlaySceneDelegate: CPMapTemplateDelegate {
             distanceRemaining: Measurement(value: remaining, unit: .meters),
             timeRemaining: time
         )
-        navigationSession?.updateTravelEstimates(estimates, for: maneuver)
+        navigationSession?.updateEstimates(estimates, for: maneuver)
     }
 }
 
