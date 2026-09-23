@@ -19,6 +19,10 @@ const GroupBackend = (() => {
       signUp: disabled,
       signIn: disabled,
       signOut: disabled,
+      getMyGroup: disabled,
+      createGroup: disabled,
+      joinGroup: disabled,
+      leaveGroup: disabled,
       createFolder: disabled,
       listFolders: disabled,
       addWaypoint: disabled,
@@ -89,6 +93,7 @@ const GroupBackend = (() => {
   async function signOut() {
     const { error } = await client.auth.signOut();
     if (error) throw error;
+    cachedGroup = undefined; // next sign-in (possibly a different account) fetches fresh
   }
 
   async function getSession() {
@@ -100,12 +105,64 @@ const GroupBackend = (() => {
     client.auth.onAuthStateChange((_event, session) => callback(session));
   }
 
+  // ---------- Crew groups ----------
+  // A named, password-protected group you create or join so your crew can
+  // see each other's live location/chat/shared markers — see the "Crew
+  // groups" section of sql/schema.sql for the RLS design (every other
+  // shared table is scoped by group_id, defaulting to "just you" when
+  // ungrouped). You belong to at most one group at a time; joining or
+  // creating a different one replaces your membership.
+  //
+  // undefined = not fetched yet this session, null = fetched, no group,
+  // {id, name} = fetched, in a group. Cleared on sign-out above so a
+  // different account signing in on the same page load doesn't reuse it.
+  let cachedGroup;
+
+  function groupFromRpcRow(data) {
+    const row = Array.isArray(data) ? data[0] : data;
+    return row ? { id: row.group_id, name: row.group_name } : null;
+  }
+
+  async function getMyGroup() {
+    if (cachedGroup !== undefined) return cachedGroup;
+    const { data, error } = await client.rpc("my_group");
+    if (error) throw error;
+    cachedGroup = groupFromRpcRow(data);
+    return cachedGroup;
+  }
+
+  async function createGroup(name, password) {
+    const { data, error } = await client.rpc("create_group", { p_name: name, p_password: password });
+    if (error) throw error;
+    cachedGroup = groupFromRpcRow(data);
+    return cachedGroup;
+  }
+
+  async function joinGroup(name, password) {
+    const { data, error } = await client.rpc("join_group", { p_name: name, p_password: password });
+    if (error) throw error;
+    cachedGroup = groupFromRpcRow(data);
+    return cachedGroup;
+  }
+
+  async function leaveGroup() {
+    const { error } = await client.rpc("leave_group");
+    if (error) throw error;
+    cachedGroup = null;
+  }
+
+  async function currentGroupId() {
+    const group = await getMyGroup();
+    return group ? group.id : null;
+  }
+
   // ---------- Trip folders ----------
   async function createFolder(name, description) {
     const uid = await currentUserId();
+    const group_id = await currentGroupId();
     const { data, error } = await client
       .from("folders")
-      .insert({ created_by: uid, name, description: description || "" })
+      .insert({ created_by: uid, name, description: description || "", group_id })
       .select()
       .single();
     if (error) throw error;
@@ -122,6 +179,7 @@ const GroupBackend = (() => {
   // category: 'trailhead' | 'campsite' | 'fuel' | 'water_crossing' | 'obstacle' | 'hazard' | 'other'
   async function addWaypoint({ name, note, lat, lng, category, severity, folderId, photoFile }) {
     const uid = await currentUserId();
+    const group_id = await currentGroupId();
     let photo_path = null;
     if (photoFile) photo_path = await uploadPhoto(photoFile);
     const { data, error } = await client
@@ -136,6 +194,7 @@ const GroupBackend = (() => {
         severity: severity || null,
         folder_id: folderId || null,
         photo_path,
+        group_id,
       })
       .select()
       .single();
@@ -165,6 +224,7 @@ const GroupBackend = (() => {
   // ---------- Shared trails ----------
   async function addTrail({ name, kind, points, distanceMeters, difficulty, folderId, photoFile }) {
     const uid = await currentUserId();
+    const group_id = await currentGroupId();
     let photo_path = null;
     if (photoFile) photo_path = await uploadPhoto(photoFile);
     const { data, error } = await client
@@ -178,6 +238,7 @@ const GroupBackend = (() => {
         difficulty: difficulty || null,
         folder_id: folderId || null,
         photo_path,
+        group_id,
       })
       .select()
       .single();
@@ -233,10 +294,11 @@ const GroupBackend = (() => {
   // Tools panel Photo row) ----------
   async function addPhoto({ lat, lng, note, photoFile }) {
     const uid = await currentUserId();
+    const group_id = await currentGroupId();
     const photo_path = await uploadPhoto(photoFile);
     const { data, error } = await client
       .from("shared_photos")
-      .insert({ created_by: uid, lat, lng, note: note || "", photo_path })
+      .insert({ created_by: uid, lat, lng, note: note || "", photo_path, group_id })
       .select()
       .single();
     if (error) throw error;
@@ -270,9 +332,10 @@ const GroupBackend = (() => {
   // ---------- Live location ----------
   async function updateMyLocation(lat, lng) {
     const uid = await currentUserId();
+    const group_id = await currentGroupId();
     const { error } = await client
       .from("locations")
-      .upsert({ user_id: uid, lat, lng, updated_at: new Date().toISOString() });
+      .upsert({ user_id: uid, lat, lng, group_id, updated_at: new Date().toISOString() });
     if (error) throw error;
   }
 
@@ -296,7 +359,8 @@ const GroupBackend = (() => {
   // ---------- Chat ----------
   async function sendMessage(body) {
     const uid = await currentUserId();
-    const { error } = await client.from("messages").insert({ user_id: uid, body });
+    const group_id = await currentGroupId();
+    const { error } = await client.from("messages").insert({ user_id: uid, body, group_id });
     if (error) throw error;
   }
 
@@ -509,6 +573,10 @@ const GroupBackend = (() => {
     signUp,
     signIn,
     signOut,
+    getMyGroup,
+    createGroup,
+    joinGroup,
+    leaveGroup,
     createFolder,
     listFolders,
     addWaypoint,

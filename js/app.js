@@ -3628,6 +3628,22 @@ function showTrailOnMap(trail) {
 // connections in the background before you've actually opened the app's
 // social features).
 let session = null;
+// The settings button doubles as the login entry point when signed out
+// (was previously only reachable indirectly, by opening Chat while
+// signed out) — every assignment to `session` goes through this so the
+// button's label/title stay in sync instead of drifting.
+function setSession(s) {
+  session = s;
+  const btn = document.getElementById("btn-settings");
+  if (!btn) return;
+  if (session) {
+    btn.textContent = "⚙️";
+    btn.title = "Settings: trip folders, sign in/out";
+  } else {
+    btn.textContent = "👤 Sign In";
+    btn.title = "Sign in to sync your content and see your crew";
+  }
+}
 let socialActive = false;
 let memberLocationMarkers = {};
 let locationBroadcastWatchId = null;
@@ -3641,12 +3657,12 @@ let groupWaypointMarkers = {};
 if (GroupBackend.enabled) {
   GroupBackend.getSession()
     .then((s) => {
-      session = s;
+      setSession(s);
       if (s) syncPersonalData().catch(() => {});
     })
     .catch((err) => console.warn("Could not restore session:", err));
   GroupBackend.onAuthChange((s) => {
-    session = s;
+    setSession(s);
     if (!s) deactivateSocial();
     else syncPersonalData().catch(() => {});
   });
@@ -3819,7 +3835,7 @@ async function openGroupPanel() {
     // after opening the app) — re-check directly here rather than trust
     // a variable that might not have resolved yet, so an already-signed-in
     // visitor doesn't get bounced to the sign-in screen for no reason.
-    session = await GroupBackend.getSession().catch(() => null);
+    setSession(await GroupBackend.getSession().catch(() => null));
   }
   if (!session) {
     renderAuthPanel();
@@ -3827,6 +3843,75 @@ async function openGroupPanel() {
   }
   activateSocial();
   renderChatPanel();
+}
+
+// The group name/password the crew shares to find each other — every
+// shared table (waypoints, trails, photos, live locations, chat) is
+// scoped to whichever group you're in, or just to you if you're in none
+// (see the "Crew groups" section of sql/schema.sql). Rendered at the top
+// of the Chat panel, above the roster/messages, so it's the first thing
+// you see there rather than a separate settings-buried flow.
+function groupSectionHtml(group) {
+  if (group) {
+    return `
+      <div class="region-item" id="crew-group-row">
+        <div><div>🏕️ ${escHtml(group.name)}</div><small>Your crew sees each other while you're in this group.</small></div>
+        <button class="pill-btn" id="leave-group-btn">Leave</button>
+      </div>
+    `;
+  }
+  return `
+    <div class="region-item" style="flex-direction:column;align-items:stretch;gap:8px;">
+      <div><div>No crew group yet</div><small>Join with a name + password your crew shares, or start a new one.</small></div>
+      <label>Group name</label>
+      <input id="group-name-input" placeholder="e.g. Saturday Crew" />
+      <label>Group password</label>
+      <input id="group-password-input" type="password" placeholder="At least 4 characters" />
+      <div style="display:flex;gap:6px;">
+        <button class="pill-btn" id="join-group-btn" style="flex:1;">Join</button>
+        <button class="pill-btn" id="create-group-btn" style="flex:1;">Create New</button>
+      </div>
+      <p id="group-error" style="color:var(--danger);font-size:13px;margin:0;"></p>
+    </div>
+  `;
+}
+
+function wireGroupSection(group) {
+  if (group) {
+    document.getElementById("leave-group-btn").addEventListener("click", async () => {
+      if (!confirm(`Leave "${group.name}"? You'll stop seeing this crew until you rejoin.`)) return;
+      try {
+        await GroupBackend.leaveGroup();
+        deactivateSocial();
+        activateSocial();
+        renderChatPanel();
+      } catch (err) {
+        alert("Could not leave group: " + err.message);
+      }
+    });
+    return;
+  }
+  const nameInput = document.getElementById("group-name-input");
+  const passwordInput = document.getElementById("group-password-input");
+  const errorEl = document.getElementById("group-error");
+  const attempt = async (action) => {
+    const name = nameInput.value.trim();
+    const password = passwordInput.value;
+    if (!name || !password) {
+      errorEl.textContent = "Group name and password are both required.";
+      return;
+    }
+    try {
+      await action(name, password);
+      deactivateSocial();
+      activateSocial();
+      renderChatPanel();
+    } catch (err) {
+      errorEl.textContent = err.message;
+    }
+  };
+  document.getElementById("join-group-btn").addEventListener("click", () => attempt(GroupBackend.joinGroup));
+  document.getElementById("create-group-btn").addEventListener("click", () => attempt(GroupBackend.createGroup));
 }
 
 // Settings: everything that isn't chat itself — trip folders and account
@@ -3861,7 +3946,7 @@ async function openSettingsPanel() {
     return;
   }
   if (!session) {
-    session = await GroupBackend.getSession().catch(() => null);
+    setSession(await GroupBackend.getSession().catch(() => null));
   }
   if (!session) {
     renderAuthPanel();
@@ -3895,7 +3980,7 @@ async function openSettingsPanel() {
   });
   document.getElementById("sign-out-btn").addEventListener("click", async () => {
     await GroupBackend.signOut();
-    session = null;
+    setSession(null);
     deactivateSocial();
     closePanel();
   });
@@ -3987,7 +4072,7 @@ function renderAuthPanel(mode = "signin") {
       } else {
         await GroupBackend.signIn(email, password);
       }
-      session = await GroupBackend.getSession();
+      setSession(await GroupBackend.getSession());
       if (!session) {
         // The project requires email confirmation — there's no active
         // session yet, so don't proceed into a Crew panel that looks
@@ -4008,10 +4093,15 @@ function renderAuthPanel(mode = "signin") {
 
 let chatMessages = [];
 
-function renderChatPanel() {
+async function renderChatPanel() {
+  const group = await GroupBackend.getMyGroup().catch(() => null);
   openPanel(
     "Chat",
     `
+    ${groupSectionHtml(group)}
+    ${
+      group
+        ? `
     <div id="crew-roster" style="font-size:12px;color:var(--text-dim);margin-bottom:8px;"></div>
     <div id="chat-log" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin:8px 0;display:flex;flex-direction:column;"></div>
     <div style="display:flex;gap:6px;">
@@ -4019,7 +4109,13 @@ function renderChatPanel() {
       <button class="pill-btn" id="chat-send">Send</button>
     </div>
     `
+        : ""
+    }
+    `
   );
+  wireGroupSection(group);
+  if (!group) return;
+
   const log = document.getElementById("chat-log");
   chatMessages.forEach((m) => log.appendChild(chatMessageEl(m)));
   log.scrollTop = log.scrollHeight;
