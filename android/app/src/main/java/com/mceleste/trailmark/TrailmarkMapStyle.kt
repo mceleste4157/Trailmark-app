@@ -42,9 +42,10 @@ object TrailmarkMapStyle {
     private const val LOCATION_ARROW_LAYER = "trailmark-location-arrow-layer"
     private const val LOCATION_ARROW_IMAGE = "trailmark-location-arrow"
 
-    fun builder(route: TrailmarkRoute?, fix: TrailmarkFix?): Style.Builder =
-        Style.Builder()
-            .fromUri(STYLE_URI)
+    fun builder(route: TrailmarkRoute?, fix: TrailmarkFix?, satellite: Boolean = false): Style.Builder {
+        val builder = Style.Builder()
+        if (satellite) builder.fromJson(SATELLITE_STYLE_JSON) else builder.fromUri(STYLE_URI)
+        return builder
             .withSources(
                 GeoJsonSource(ROUTE_SOURCE, routeGeometry(route)),
                 GeoJsonSource(LOCATION_SOURCE, locationFeature(fix))
@@ -79,6 +80,7 @@ object TrailmarkMapStyle {
                     iconAllowOverlap(true)
                 )
             )
+    }
 
     fun updateRoute(style: Style, route: TrailmarkRoute?) {
         style.getSourceAs<GeoJsonSource>(ROUTE_SOURCE)?.setGeoJson(routeGeometry(route))
@@ -127,4 +129,22 @@ object TrailmarkMapStyle {
         Canvas(bitmap).drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE })
         return bitmap
     }
+
+    private const val SATELLITE_STYLE_JSON = """
+        {
+          "version": 8,
+          "sources": {
+            "esri-satellite": {
+              "type": "raster",
+              "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+              "tileSize": 256,
+              "maxzoom": 19,
+              "attribution": "Esri, Maxar, Earthstar Geographics, and the GIS User Community"
+            }
+          },
+          "layers": [
+            { "id": "esri-satellite", "type": "raster", "source": "esri-satellite" }
+          ]
+        }
+    """
 }

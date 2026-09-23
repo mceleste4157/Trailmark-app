@@ -2,8 +2,12 @@ package com.mceleste.trailmark
 
 import android.Manifest
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -27,6 +31,10 @@ import kotlin.concurrent.thread
 class MainActivity : AppCompatActivity() {
     private lateinit var mapView: MapView
     private lateinit var statusView: TextView
+    private lateinit var speedView: TextView
+    private lateinit var headingView: TextView
+    private lateinit var elevationView: TextView
+    private lateinit var connectivityView: TextView
     private lateinit var locationService: LocationService
     private lateinit var offlineMapManager: OfflineMapManager
 
@@ -35,6 +43,9 @@ class MainActivity : AppCompatActivity() {
     private var activeRoute: TrailmarkRoute? = null
     private var latestFix: TrailmarkFix? = null
     private var locationStarted = false
+    private var satelliteMode = false
+    private var routeLayerVisible = true
+    private var lightChrome = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,13 +54,23 @@ class MainActivity : AppCompatActivity() {
 
         mapView = findViewById(R.id.map_view)
         statusView = findViewById(R.id.map_status)
+        speedView = findViewById(R.id.stat_speed)
+        headingView = findViewById(R.id.stat_heading)
+        elevationView = findViewById(R.id.stat_elevation)
+        connectivityView = findViewById(R.id.connectivity_status)
         offlineMapManager = OfflineMapManager(this)
         locationService = LocationService(this, ::onLocationFix)
 
         mapView.onCreate(savedInstanceState)
         mapView.getMapAsync { readyMap ->
             map = readyMap
-            readyMap.setStyle(TrailmarkMapStyle.builder(activeRoute, latestFix)) {
+            readyMap.setStyle(
+                TrailmarkMapStyle.builder(
+                    if (routeLayerVisible) activeRoute else null,
+                    latestFix,
+                    satelliteMode,
+                ),
+            ) {
                 statusView.setText(if (routes.isEmpty()) R.string.select_route else R.string.routes)
                 activeRoute?.let(::showRoute)
             }
@@ -61,6 +82,10 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.offline_maps_button).setOnClickListener { confirmOfflineDownload() }
         findViewById<View>(R.id.chat_button).setOnClickListener { showSetupMenu() }
         findViewById<View>(R.id.account_button).setOnClickListener { showSetupMenu() }
+        findViewById<View>(R.id.basemap_button).setOnClickListener { toggleBasemap() }
+        findViewById<View>(R.id.layers_button).setOnClickListener { toggleRouteLayer() }
+        findViewById<View>(R.id.weather_button).setOnClickListener { openWeather() }
+        findViewById<View>(R.id.theme_button).setOnClickListener { toggleChromeTheme() }
 
         loadRoutes()
         if (!hasForegroundLocation()) requestForegroundLocation()
@@ -75,6 +100,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         mapView.onResume()
+        updateConnectivityStatus()
     }
 
     override fun onPause() {
@@ -174,7 +200,9 @@ class MainActivity : AppCompatActivity() {
             route.name,
             route.distanceMeters / METERS_PER_MILE
         )
-        map?.style?.let { TrailmarkMapStyle.updateRoute(it, route) }
+        map?.style?.let {
+            TrailmarkMapStyle.updateRoute(it, if (routeLayerVisible) route else null)
+        }
         val camera = map?.getCameraForLatLngBounds(
             TrailmarkMapStyle.bounds(route),
             intArrayOf(72, 140, 72, 180)
@@ -210,8 +238,91 @@ class MainActivity : AppCompatActivity() {
             val firstFix = latestFix == null
             latestFix = fix
             map?.style?.let { TrailmarkMapStyle.updateLocation(it, fix) }
+            speedView.text = fix.speedMps?.let {
+                getString(R.string.speed_value, (it * MPS_TO_MPH).toInt())
+            } ?: getString(R.string.speed_unavailable)
+            headingView.text = fix.bearingDeg?.let {
+                getString(R.string.heading_value, it.toInt())
+            } ?: getString(R.string.heading_unavailable)
+            elevationView.text = fix.altitudeM?.let {
+                getString(R.string.elevation_value, (it * METERS_TO_FEET).toInt())
+            } ?: getString(R.string.elevation_unavailable)
             if (firstFix && activeRoute == null) centerMap()
         }
+    }
+
+    private fun toggleBasemap() {
+        satelliteMode = !satelliteMode
+        findViewById<TextView>(R.id.basemap_button).setText(
+            if (satelliteMode) R.string.satellite else R.string.streets
+        )
+        map?.setStyle(
+            TrailmarkMapStyle.builder(
+                if (routeLayerVisible) activeRoute else null,
+                latestFix,
+                satelliteMode,
+            ),
+        ) {
+            activeRoute?.let(::showRoute)
+        }
+    }
+
+    private fun toggleRouteLayer() {
+        routeLayerVisible = !routeLayerVisible
+        map?.style?.let { style ->
+            TrailmarkMapStyle.updateRoute(style, if (routeLayerVisible) activeRoute else null)
+        }
+        findViewById<View>(R.id.layers_button).alpha = if (routeLayerVisible) 1f else 0.55f
+    }
+
+    private fun openWeather() {
+        val fix = latestFix
+        if (fix == null) {
+            requestForegroundLocation()
+            return
+        }
+        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(
+            "https://forecast.weather.gov/MapClick.php?lat=${fix.latitude}&lon=${fix.longitude}"
+        )))
+    }
+
+    private fun toggleChromeTheme() {
+        lightChrome = !lightChrome
+        val background = Color.parseColor(if (lightChrome) "#F7F1F5F9" else "#F70F172A")
+        val panel = Color.parseColor(if (lightChrome) "#FFFFFFFF" else "#CC111827")
+        val text = Color.parseColor(if (lightChrome) "#0F172A" else "#E5E7EB")
+        val topBar = findViewById<View>(R.id.top_bar)
+        val bottomBar = findViewById<View>(R.id.bottom_bar)
+        topBar.setBackgroundColor(background)
+        bottomBar.setBackgroundColor(background)
+        tintText(topBar, text)
+        tintText(bottomBar, text)
+        listOf(
+            R.id.basemap_button,
+            R.id.layers_button,
+            R.id.weather_button,
+            R.id.account_button,
+            R.id.theme_button
+        ).forEach { id ->
+            findViewById<TextView>(id).backgroundTintList = ColorStateList.valueOf(panel)
+        }
+        findViewById<TextView>(R.id.theme_button).text = if (lightChrome) "☾" else "☀"
+        updateConnectivityStatus()
+    }
+
+    private fun tintText(view: View, color: Int) {
+        if (view is TextView) view.setTextColor(color)
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) tintText(view.getChildAt(index), color)
+        }
+    }
+
+    private fun updateConnectivityStatus() {
+        val manager = getSystemService(ConnectivityManager::class.java)
+        val capabilities = manager.getNetworkCapabilities(manager.activeNetwork)
+        val online = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+        connectivityView.setText(if (online) R.string.online else R.string.offline_status)
+        connectivityView.setTextColor(Color.parseColor(if (online) "#22C55E" else "#FACC15"))
     }
 
     private fun confirmOfflineDownload() {
@@ -383,5 +494,7 @@ class MainActivity : AppCompatActivity() {
         private const val REQUEST_BACKGROUND_LOCATION = 1002
         private const val REQUEST_NOTIFICATIONS = 1003
         private const val METERS_PER_MILE = 1609.344
+        private const val MPS_TO_MPH = 2.236936
+        private const val METERS_TO_FEET = 3.28084
     }
 }
