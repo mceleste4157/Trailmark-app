@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
@@ -15,6 +16,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
@@ -37,6 +40,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        applySystemBarInsets()
 
         mapView = findViewById(R.id.map_view)
         statusView = findViewById(R.id.map_status)
@@ -123,6 +127,24 @@ class MainActivity : AppCompatActivity() {
                     ?: loaded.firstOrNull()
                 if (selected != null) showRoute(selected) else statusView.setText(R.string.no_routes)
             }
+        }
+    }
+
+    private fun applySystemBarInsets() {
+        val topBar = findViewById<View>(R.id.top_bar)
+        val bottomBar = findViewById<View>(R.id.bottom_bar)
+        val topPadding = topBar.paddingTop
+        val bottomPadding = bottomBar.paddingBottom
+
+        ViewCompat.setOnApplyWindowInsetsListener(topBar) { view, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(view.paddingLeft, topPadding + systemBars.top, view.paddingRight, view.paddingBottom)
+            insets
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(bottomBar) { view, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight, bottomPadding + systemBars.bottom)
+            insets
         }
     }
 
