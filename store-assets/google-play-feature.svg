@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 500">
+  <rect width="1024" height="500" fill="#0f172a"/>
+  <circle cx="790" cy="125" r="52" fill="#facc15"/>
+  <path d="M570 420 L735 135 L830 300 L890 200 L1010 420 Z" fill="#166534"/>
+  <text x="72" y="220" fill="#ffffff" font-family="Helvetica, Arial, sans-serif" font-size="82" font-weight="700">Trailmark</text>
+  <text x="76" y="282" fill="#cbd5e1" font-family="Helvetica, Arial, sans-serif" font-size="28">Navigate farther. Stay connected.</text>
+  <path d="M78 336 C180 300 260 390 374 330 C430 300 475 302 530 330" fill="none" stroke="#ef4444" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="78" cy="336" r="10" fill="#ffffff"/>
+  <circle cx="530" cy="330" r="10" fill="#ffffff"/>
+</svg>

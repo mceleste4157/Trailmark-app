@@ -12,6 +12,8 @@ settings:
     SWIFT_VERSION: 5.0
     DEVELOPMENT_TEAM: ""
     PRODUCT_BUNDLE_IDENTIFIER: com.mceleste.trailmark
+    MARKETING_VERSION: 1.0.0
+    CURRENT_PROJECT_VERSION: 1
 
 targets:
   Trailmark:
@@ -35,6 +37,7 @@ targets:
         PRODUCT_NAME: Trailmark
         INFOPLIST_FILE: Trailmark/Info.plist
         CODE_SIGN_ENTITLEMENTS: Trailmark/Trailmark.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     frameworks:
       - CarPlay
       - CoreLocation

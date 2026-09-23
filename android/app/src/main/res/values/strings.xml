@@ -22,7 +22,7 @@
     <string name="my_content">My Content</string>
     <string name="offline_maps">Offline Maps</string>
     <string name="chat">Chat</string>
-    <string name="version_badge">v1.00</string>
+    <string name="version_badge">v1.0.0</string>
     <string name="streets">🗺️ Streets</string>
     <string name="satellite">🛰️ Satellite</string>
     <string name="layers">🗂️ Layers</string>
