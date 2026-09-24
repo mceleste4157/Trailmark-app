@@ -662,6 +662,61 @@ async function toggleCellTowers() {
   }
 }
 
+// ---------- Community trails (anonymous, app-wide — see GroupBackend's
+// contributeGlobalTrail/listGlobalTrails and sql/schema.sql's
+// global_trails table) ----------
+let communityTrailsOn = false;
+const COMMUNITY_TRAILS_SOURCE_ID = "community-trails";
+
+async function refreshCommunityTrailsLayer() {
+  const trails = await GroupBackend.listGlobalTrails();
+  const geojson = {
+    type: "FeatureCollection",
+    features: trails
+      .filter((t) => Array.isArray(t.points) && t.points.length >= 2)
+      .map((t) => ({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: t.points.map((p) => [p.lng, p.lat]) },
+      })),
+  };
+  if (map.getSource(COMMUNITY_TRAILS_SOURCE_ID)) {
+    map.getSource(COMMUNITY_TRAILS_SOURCE_ID).setData(geojson);
+  } else {
+    map.addSource(COMMUNITY_TRAILS_SOURCE_ID, { type: "geojson", data: geojson });
+    map.addLayer({
+      id: COMMUNITY_TRAILS_SOURCE_ID,
+      type: "line",
+      source: COMMUNITY_TRAILS_SOURCE_ID,
+      layout: { "line-join": "round", "line-cap": "round" },
+      paint: { "line-color": "#c2410c", "line-width": 2.5, "line-opacity": 0.55, "line-dasharray": [2, 1.5] },
+    });
+  }
+}
+
+async function toggleCommunityTrails() {
+  if (!GroupBackend.enabled) {
+    alert("Community trails aren't set up yet — see js/group/config.js in the repo.");
+    return;
+  }
+  if (!navigator.onLine && !communityTrailsOn) {
+    alert("Community trails need an internet connection.");
+    return;
+  }
+  communityTrailsOn = !communityTrailsOn;
+  if (!communityTrailsOn) {
+    if (map.getLayer(COMMUNITY_TRAILS_SOURCE_ID)) map.removeLayer(COMMUNITY_TRAILS_SOURCE_ID);
+    if (map.getSource(COMMUNITY_TRAILS_SOURCE_ID)) map.removeSource(COMMUNITY_TRAILS_SOURCE_ID);
+    return;
+  }
+  try {
+    await refreshCommunityTrailsLayer();
+  } catch (err) {
+    alert("Could not load community trails: " + err.message);
+    communityTrailsOn = false;
+  }
+}
+
 document.getElementById("btn-settings")?.addEventListener("click", openSettingsPanel);
 
 let trailSourceCounter = 0;
@@ -695,15 +750,18 @@ function closePanel() {
 document.getElementById("panel-close").addEventListener("click", closePanel);
 
 // ---------- Version history ----------
-const btnVersion = document.getElementById("btn-version");
+// Now shown inside Settings (not its own topbar button) — see
+// openSettingsPanel(), which renders currentVersionText and wires up
+// openVersionHistoryPanel() each time it draws.
+let currentVersionText = "";
 fetch("version.json", { cache: "no-store" })
   .then((res) => res.json())
   .then((data) => {
-    btnVersion.textContent = `v${data.current}`;
+    currentVersionText = `v${data.current}`;
   })
   .catch(() => {});
 
-btnVersion.addEventListener("click", async () => {
+async function openVersionHistoryPanel() {
   let data;
   try {
     const res = await fetch("version.json", { cache: "no-store" });
@@ -724,7 +782,7 @@ btnVersion.addEventListener("click", async () => {
     )
     .join("");
   openPanel(`Version history — current v${escHtml(data.current)}`, rows || "<p>No history yet.</p>");
-});
+}
 
 // Minimal escaping for any user-entered text we inject into innerHTML.
 function escHtml(str) {
@@ -1451,6 +1509,14 @@ document.getElementById("btn-stop-recording").addEventListener("click", async ()
   });
   syncPersonalData().catch(() => {});
   backfillAndSaveTrailElevation(savedTrailId);
+  // Anonymous, app-wide contribution to the community trail layer — a
+  // real GPS-recorded ride (not a tapped-out planned route), no name or
+  // account attached, just the path. Requires being signed in (RLS), so
+  // skip the call entirely rather than let it fail loudly for a signed-
+  // out recording.
+  if (GroupBackend.enabled && session) {
+    GroupBackend.contributeGlobalTrail({ points: result.points, distanceMeters: result.distanceMeters }).catch(() => {});
+  }
 
   if (liveTrailSourceId) {
     map.removeLayer(liveTrailSourceId);
@@ -3324,6 +3390,13 @@ async function openLayersPanel() {
       </button>`
           : ""
       }
+      ${
+        GroupBackend.enabled
+          ? `<button class="tools-grid-btn" id="layers-community-btn">
+        <span class="tools-grid-icon${communityTrailsOn ? " active" : ""}">🥾</span><span>Community Trails</span>
+      </button>`
+          : ""
+      }
     </div>
     `
   );
@@ -3337,6 +3410,10 @@ async function openLayersPanel() {
   });
   document.getElementById("layers-cell-btn")?.addEventListener("click", async () => {
     await toggleCellTowers();
+    openLayersPanel();
+  });
+  document.getElementById("layers-community-btn")?.addEventListener("click", async () => {
+    await toggleCommunityTrails();
     openLayersPanel();
   });
 }
@@ -3625,6 +3702,22 @@ function showTrailOnMap(trail) {
 // connections in the background before you've actually opened the app's
 // social features).
 let session = null;
+// The settings button doubles as the login entry point when signed out
+// (was previously only reachable indirectly, by opening Chat while
+// signed out) — every assignment to `session` goes through this so the
+// button's label/title stay in sync instead of drifting.
+function setSession(s) {
+  session = s;
+  const btn = document.getElementById("btn-settings");
+  if (!btn) return;
+  if (session) {
+    btn.textContent = "⚙️";
+    btn.title = "Settings: trip folders, sign in/out";
+  } else {
+    btn.textContent = "👤 Sign In";
+    btn.title = "Sign in to sync your content and see your crew";
+  }
+}
 let socialActive = false;
 let memberLocationMarkers = {};
 let locationBroadcastWatchId = null;
@@ -3638,12 +3731,12 @@ let groupWaypointMarkers = {};
 if (GroupBackend.enabled) {
   GroupBackend.getSession()
     .then((s) => {
-      session = s;
+      setSession(s);
       if (s) syncPersonalData().catch(() => {});
     })
     .catch((err) => console.warn("Could not restore session:", err));
   GroupBackend.onAuthChange((s) => {
-    session = s;
+    setSession(s);
     if (!s) deactivateSocial();
     else syncPersonalData().catch(() => {});
   });
@@ -3816,7 +3909,7 @@ async function openGroupPanel() {
     // after opening the app) — re-check directly here rather than trust
     // a variable that might not have resolved yet, so an already-signed-in
     // visitor doesn't get bounced to the sign-in screen for no reason.
-    session = await GroupBackend.getSession().catch(() => null);
+    setSession(await GroupBackend.getSession().catch(() => null));
   }
   if (!session) {
     renderAuthPanel();
@@ -3826,19 +3919,108 @@ async function openGroupPanel() {
   renderChatPanel();
 }
 
+// The group name/password the crew shares to find each other — every
+// shared table (waypoints, trails, photos, live locations, chat) is
+// scoped to whichever group you're in, or just to you if you're in none
+// (see the "Crew groups" section of sql/schema.sql). Rendered at the top
+// of the Chat panel, above the roster/messages, so it's the first thing
+// you see there rather than a separate settings-buried flow.
+function groupSectionHtml(group) {
+  if (group) {
+    return `
+      <div class="region-item" id="crew-group-row">
+        <div><div>🏕️ ${escHtml(group.name)}</div><small>Your crew sees each other while you're in this group.</small></div>
+        <button class="pill-btn" id="leave-group-btn">Leave</button>
+      </div>
+    `;
+  }
+  return `
+    <div class="region-item" style="flex-direction:column;align-items:stretch;gap:8px;">
+      <div><div>No crew group yet</div><small>Join with a name + password your crew shares, or start a new one.</small></div>
+      <label>Group name</label>
+      <input id="group-name-input" placeholder="e.g. Saturday Crew" />
+      <label>Group password</label>
+      <input id="group-password-input" type="password" placeholder="At least 4 characters" />
+      <div style="display:flex;gap:6px;">
+        <button class="pill-btn" id="join-group-btn" style="flex:1;">Join</button>
+        <button class="pill-btn" id="create-group-btn" style="flex:1;">Create New</button>
+      </div>
+      <p id="group-error" style="color:var(--danger);font-size:13px;margin:0;"></p>
+    </div>
+  `;
+}
+
+function wireGroupSection(group) {
+  if (group) {
+    document.getElementById("leave-group-btn").addEventListener("click", async () => {
+      if (!confirm(`Leave "${group.name}"? You'll stop seeing this crew until you rejoin.`)) return;
+      try {
+        await GroupBackend.leaveGroup();
+        deactivateSocial();
+        activateSocial();
+        renderChatPanel();
+      } catch (err) {
+        alert("Could not leave group: " + err.message);
+      }
+    });
+    return;
+  }
+  const nameInput = document.getElementById("group-name-input");
+  const passwordInput = document.getElementById("group-password-input");
+  const errorEl = document.getElementById("group-error");
+  const attempt = async (action) => {
+    const name = nameInput.value.trim();
+    const password = passwordInput.value;
+    if (!name || !password) {
+      errorEl.textContent = "Group name and password are both required.";
+      return;
+    }
+    try {
+      await action(name, password);
+      deactivateSocial();
+      activateSocial();
+      renderChatPanel();
+    } catch (err) {
+      errorEl.textContent = err.message;
+    }
+  };
+  document.getElementById("join-group-btn").addEventListener("click", () => attempt(GroupBackend.joinGroup));
+  document.getElementById("create-group-btn").addEventListener("click", () => attempt(GroupBackend.createGroup));
+}
+
 // Settings: everything that isn't chat itself — trip folders and account
 // sign in/out. Split out from the Chat panel (which used to carry all of
 // this) so Chat stays focused on just messaging.
+// Shared "region-item" row shown at the bottom of every Settings-panel
+// state (signed in, signed out, or crew features unconfigured) — the
+// version number used to live as its own topbar button next to the app
+// title; both were removed to free up topbar space, with the version
+// display (and its "view history" action) moved in here instead.
+function versionRowHtml() {
+  return `
+    <div class="region-item" id="version-row">
+      <div><div>Trailmark</div><small>${escHtml(currentVersionText || "…")}</small></div>
+      <button class="pill-btn" id="version-history-btn">History</button>
+    </div>
+  `;
+}
+function wireVersionRow() {
+  const btn = document.getElementById("version-history-btn");
+  if (btn) btn.addEventListener("click", openVersionHistoryPanel);
+}
+
 async function openSettingsPanel() {
   if (!GroupBackend.enabled) {
     openPanel(
       "Settings",
-      `<p style="color:var(--text-dim);font-size:13px;">Crew features aren't set up yet — see js/group/config.js in the repo.</p>`
+      `<p style="color:var(--text-dim);font-size:13px;">Crew features aren't set up yet — see js/group/config.js in the repo.</p>
+      ${versionRowHtml()}`
     );
+    wireVersionRow();
     return;
   }
   if (!session) {
-    session = await GroupBackend.getSession().catch(() => null);
+    setSession(await GroupBackend.getSession().catch(() => null));
   }
   if (!session) {
     renderAuthPanel();
@@ -3853,6 +4035,7 @@ async function openSettingsPanel() {
     </div>
     <button class="primary" id="open-folders-btn" style="background:var(--panel);border:1px solid var(--accent-bright);margin-top:12px;">Trip Folders</button>
     <button class="primary" id="sign-out-btn" style="background:var(--panel);border:1px solid var(--border);">Sign Out</button>
+    ${versionRowHtml()}
     `
   );
   document.getElementById("open-folders-btn").addEventListener("click", openFoldersPanel);
@@ -3871,10 +4054,11 @@ async function openSettingsPanel() {
   });
   document.getElementById("sign-out-btn").addEventListener("click", async () => {
     await GroupBackend.signOut();
-    session = null;
+    setSession(null);
     deactivateSocial();
     closePanel();
   });
+  wireVersionRow();
 }
 
 function activateSocial() {
@@ -3943,11 +4127,13 @@ function renderAuthPanel(mode = "signin") {
       ${isSignup ? "Already have an account? Sign in" : "New here? Create an account"}
     </button>
     <p id="auth-error" style="color:var(--danger);font-size:13px;"></p>
+    ${versionRowHtml()}
     `
   );
   const showError = (err) => {
     document.getElementById("auth-error").textContent = err.message || String(err);
   };
+  wireVersionRow();
   document.getElementById("auth-switch-mode").addEventListener("click", () => renderAuthPanel(isSignup ? "signin" : "signup"));
   document.getElementById("auth-form").addEventListener("submit", async (e) => {
     e.preventDefault(); // this is an SPA — handle it in JS, but the submit event itself is what a browser's password manager watches for
@@ -3960,7 +4146,7 @@ function renderAuthPanel(mode = "signin") {
       } else {
         await GroupBackend.signIn(email, password);
       }
-      session = await GroupBackend.getSession();
+      setSession(await GroupBackend.getSession());
       if (!session) {
         // The project requires email confirmation — there's no active
         // session yet, so don't proceed into a Crew panel that looks
@@ -3981,10 +4167,15 @@ function renderAuthPanel(mode = "signin") {
 
 let chatMessages = [];
 
-function renderChatPanel() {
+async function renderChatPanel() {
+  const group = await GroupBackend.getMyGroup().catch(() => null);
   openPanel(
     "Chat",
     `
+    ${groupSectionHtml(group)}
+    ${
+      group
+        ? `
     <div id="crew-roster" style="font-size:12px;color:var(--text-dim);margin-bottom:8px;"></div>
     <div id="chat-log" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin:8px 0;display:flex;flex-direction:column;"></div>
     <div style="display:flex;gap:6px;">
@@ -3992,7 +4183,13 @@ function renderChatPanel() {
       <button class="pill-btn" id="chat-send">Send</button>
     </div>
     `
+        : ""
+    }
+    `
   );
+  wireGroupSection(group);
+  if (!group) return;
+
   const log = document.getElementById("chat-log");
   chatMessages.forEach((m) => log.appendChild(chatMessageEl(m)));
   log.scrollTop = log.scrollHeight;
@@ -4401,7 +4598,7 @@ errorBanner.addEventListener("click", async () => {
       stack: report.stack,
       url: location.href,
       userAgent: navigator.userAgent,
-      appVersion: btnVersion.textContent,
+      appVersion: currentVersionText,
     });
     alert("Thanks — that's been reported.");
   } catch (err) {

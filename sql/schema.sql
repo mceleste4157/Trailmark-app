@@ -2,26 +2,33 @@
 --
 -- Run this once in your Supabase project's SQL Editor (Dashboard -> SQL
 -- Editor -> New query -> paste -> Run). Safe to re-run: it drops and
--- recreates everything below `profiles`, so re-running just resets it.
+-- recreates everything below `profiles`, so re-running just resets it —
+-- EXCEPT the `groups`/`group_members` tables further down, which use
+-- `create table if not exists` specifically so a re-run never wipes real
+-- crew-group membership/data (see the "Crew groups" section below).
 --
--- Design: there is no "group" concept. Every signed-in user shares one
--- space — anyone who creates an account sees everyone else's live
--- location, chat, and shared waypoints/trails/photos.
+-- Design: every signed-in user can create or join a named, password-
+-- protected group (see "Crew groups" below); shared waypoints/trails/
+-- photos, live location, and chat are all scoped to your current group,
+-- plus your own rows are always visible to you even if ungrouped.
 -- Local-only features (map, GPS recording, offline maps, local waypoints
--- and photos) never need an account at all; RLS below only gates the
--- shared/social tables, restricted to authenticated users in general and
--- to each user's own rows for writes.
+-- and photos) never need an account at all.
 --
--- If you previously ran an earlier version of this schema with a
--- "groups" concept, this drops those tables (group_waypoints,
--- group_trails, group_locations, group_messages, group_emergency_alerts,
--- group_photos, group_trip_folders, group_members, groups) along with
--- is_group_member() — safe since none of that ever held real data if you
--- were hitting the RLS error that prompted this reset.
+-- An EARLIER version of this schema tried a "groups" concept, hit an RLS
+-- policy recursion bug, and reverted to one flat shared space for everyone
+-- — the "groups" section below is a second attempt, structured
+-- specifically to avoid that bug (see the comment there for how).
 
 create extension if not exists "uuid-ossp";
+create extension if not exists "pgcrypto";
 
 -- ---------- Drop the old per-group schema, if present ----------
+-- These specific table names (group_waypoints, group_trails, etc.) are
+-- one-time historical cleanup from the earlier reverted attempt and are
+-- NOT reused by the new "Crew groups" section below — `groups` and
+-- `group_members` are deliberately NOT dropped here anymore (they used
+-- to be), since this script is re-run periodically and dropping them on
+-- every re-run would destroy real group membership data going forward.
 drop table if exists group_photos cascade;
 drop table if exists group_trip_folders cascade;
 drop table if exists group_waypoints cascade;
@@ -29,14 +36,6 @@ drop table if exists group_trails cascade;
 drop table if exists group_locations cascade;
 drop table if exists group_emergency_alerts cascade;
 drop table if exists group_messages cascade;
-drop table if exists group_members cascade;
-drop table if exists groups cascade;
--- cascade: the old group-scoped storage.objects policies ("members can
--- read/upload their groups' trail photos") reference this function and
--- aren't dropped until the Storage section further down — without
--- cascade here, that ordering makes Postgres refuse this drop outright
--- and abort the whole script before anything below it ever runs.
-drop function if exists is_group_member(uuid) cascade;
 
 -- ---------- Drop emergency alerts (SOS feature removed) ----------
 drop table if exists emergency_alerts cascade;
@@ -67,28 +66,173 @@ create policy "users can insert their own profile"
   on profiles for insert
   with check (auth.uid() = id);
 
+-- ---------- Crew groups ----------
+-- A named, password-protected group — create one and share the name +
+-- password with your crew so you can all join it and see each other.
+-- Each user belongs to at most one group at a time (group_members.user_id
+-- is its own primary key, not part of a composite key) — joining or
+-- creating a different group just replaces your membership row.
+--
+-- Every operation on these two tables goes through the SECURITY DEFINER
+-- functions below instead of direct table access (both tables have RLS
+-- enabled with zero policies, so direct access is refused outright, even
+-- to a row's own owner). That's not just to keep the password hash out of
+-- reach — the earlier "groups" attempt referenced at the top of this file
+-- was reverted specifically because an RLS policy that queries
+-- group_members (directly, or transitively through another table's own
+-- policy) can trigger "infinite recursion detected in policy for relation
+-- group_members". A SECURITY DEFINER function's internal queries run with
+-- the function owner's privileges and bypass RLS entirely, so they don't
+-- have that problem — is_group_member() below is what every other
+-- group-scoped table's RLS policy calls instead of querying
+-- group_members directly.
+create table if not exists groups (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null unique,
+  password_hash text not null,
+  created_by uuid not null references profiles(id),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists group_members (
+  user_id uuid primary key references profiles(id) on delete cascade,
+  group_id uuid not null references groups(id) on delete cascade,
+  joined_at timestamptz not null default now()
+);
+
+alter table groups enable row level security;
+alter table group_members enable row level security;
+
+create or replace function is_group_member(check_group_id uuid)
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1 from group_members
+    where user_id = auth.uid() and group_id = check_group_id
+  );
+$$;
+
+-- What group (if any) the signed-in user is currently in — the client
+-- calls this once after sign-in / on load to know whether to show "join
+-- or create a group" or the normal crew UI.
+create or replace function my_group()
+returns table(group_id uuid, group_name text)
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select g.id, g.name
+  from group_members gm
+  join groups g on g.id = gm.group_id
+  where gm.user_id = auth.uid();
+$$;
+
+create or replace function create_group(p_name text, p_password text)
+returns table(group_id uuid, group_name text)
+language plpgsql
+security definer
+-- crypt()/gen_salt() (pgcrypto) live in the `extensions` schema on
+-- Supabase, not `public` — needs to be on the search path explicitly,
+-- since `set search_path` here replaces the caller's path rather than
+-- adding to it (that's also why it's pinned to just these two schemas
+-- instead of left to inherit whatever the caller's path happens to be).
+set search_path = public, extensions
+as $$
+declare
+  new_id uuid;
+  clean_name text := trim(p_name);
+begin
+  if clean_name = '' then
+    raise exception 'Group name is required';
+  end if;
+  if p_password is null or length(p_password) < 4 then
+    raise exception 'Group password must be at least 4 characters';
+  end if;
+
+  insert into groups (name, password_hash, created_by)
+  values (clean_name, crypt(p_password, gen_salt('bf')), auth.uid())
+  returning id into new_id;
+
+  insert into group_members (user_id, group_id)
+  values (auth.uid(), new_id)
+  on conflict (user_id) do update set group_id = excluded.group_id, joined_at = now();
+
+  return query select new_id, clean_name;
+end;
+$$;
+
+create or replace function join_group(p_name text, p_password text)
+returns table(group_id uuid, group_name text)
+language plpgsql
+security definer
+set search_path = public, extensions -- crypt() lives in extensions on Supabase — see create_group's comment above
+as $$
+declare
+  found_id uuid;
+  found_name text;
+  found_hash text;
+begin
+  select id, name, password_hash into found_id, found_name, found_hash
+  from groups
+  where lower(name) = lower(trim(p_name));
+
+  if found_id is null then
+    raise exception 'No group found with that name';
+  end if;
+
+  if crypt(p_password, found_hash) <> found_hash then
+    raise exception 'Incorrect group password';
+  end if;
+
+  insert into group_members (user_id, group_id)
+  values (auth.uid(), found_id)
+  on conflict (user_id) do update set group_id = excluded.group_id, joined_at = now();
+
+  return query select found_id, found_name;
+end;
+$$;
+
+create or replace function leave_group()
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  delete from group_members where user_id = auth.uid();
+$$;
+
 -- ---------- Trip folders ----------
 -- Groups waypoints + trails into a named trip (e.g. "Saturday Windrock
--- run"). Shared globally, same as everything else here.
+-- run"). Shared with your crew group, same as everything else here.
 create table if not exists folders (
   id uuid primary key default uuid_generate_v4(),
   created_by uuid not null references auth.users(id),
   name text not null,
   description text default '',
+  group_id uuid references groups(id) on delete cascade,
   created_at timestamptz not null default now()
 );
+
+alter table folders add column if not exists group_id uuid references groups(id) on delete cascade;
 
 alter table folders enable row level security;
 
 drop policy if exists "authenticated users can read folders" on folders;
-create policy "authenticated users can read folders"
+drop policy if exists "creator or group members can read folders" on folders;
+create policy "creator or group members can read folders"
   on folders for select
-  using (auth.role() = 'authenticated');
+  using (auth.uid() = created_by or (group_id is not null and is_group_member(group_id)));
 
 drop policy if exists "authenticated users can create folders" on folders;
-create policy "authenticated users can create folders"
+drop policy if exists "group members can create folders" on folders;
+create policy "group members can create folders"
   on folders for insert
-  with check (auth.role() = 'authenticated' and auth.uid() = created_by);
+  with check (auth.role() = 'authenticated' and auth.uid() = created_by and (group_id is null or is_group_member(group_id)));
 
 drop policy if exists "creators can update their own folders" on folders;
 create policy "creators can update their own folders"
@@ -117,25 +261,29 @@ create table if not exists shared_waypoints (
   severity smallint check (severity is null or severity between 1 and 3), -- 1 (minor) - 3 (major); only meaningful for water_crossing/obstacle/hazard (enforced client-side)
   folder_id uuid references folders(id) on delete set null,
   photo_path text, -- path within the 'trail-photos' storage bucket, if any
+  group_id uuid references groups(id) on delete cascade,
   created_at timestamptz not null default now()
 );
 
 -- create table is a no-op on a database where this table already
--- existed before the severity column above was added, so add it
--- explicitly too — idempotent, safe to re-run.
+-- existed before the severity/group_id columns above were added, so add
+-- them explicitly too — idempotent, safe to re-run.
 alter table shared_waypoints add column if not exists severity smallint check (severity is null or severity between 1 and 3);
+alter table shared_waypoints add column if not exists group_id uuid references groups(id) on delete cascade;
 
 alter table shared_waypoints enable row level security;
 
 drop policy if exists "authenticated users can read shared waypoints" on shared_waypoints;
-create policy "authenticated users can read shared waypoints"
+drop policy if exists "creator or group members can read shared waypoints" on shared_waypoints;
+create policy "creator or group members can read shared waypoints"
   on shared_waypoints for select
-  using (auth.role() = 'authenticated');
+  using (auth.uid() = created_by or (group_id is not null and is_group_member(group_id)));
 
 drop policy if exists "authenticated users can add shared waypoints" on shared_waypoints;
-create policy "authenticated users can add shared waypoints"
+drop policy if exists "group members can add shared waypoints" on shared_waypoints;
+create policy "group members can add shared waypoints"
   on shared_waypoints for insert
-  with check (auth.role() = 'authenticated' and auth.uid() = created_by);
+  with check (auth.role() = 'authenticated' and auth.uid() = created_by and (group_id is null or is_group_member(group_id)));
 
 drop policy if exists "creators can update their own shared waypoints" on shared_waypoints;
 create policy "creators can update their own shared waypoints"
@@ -164,20 +312,25 @@ create table if not exists shared_trails (
   difficulty smallint check (difficulty is null or (difficulty between 1 and 10)),
   folder_id uuid references folders(id) on delete set null,
   photo_path text,
+  group_id uuid references groups(id) on delete cascade,
   created_at timestamptz not null default now()
 );
+
+alter table shared_trails add column if not exists group_id uuid references groups(id) on delete cascade;
 
 alter table shared_trails enable row level security;
 
 drop policy if exists "authenticated users can read shared trails" on shared_trails;
-create policy "authenticated users can read shared trails"
+drop policy if exists "creator or group members can read shared trails" on shared_trails;
+create policy "creator or group members can read shared trails"
   on shared_trails for select
-  using (auth.role() = 'authenticated');
+  using (auth.uid() = created_by or (group_id is not null and is_group_member(group_id)));
 
 drop policy if exists "authenticated users can add shared trails" on shared_trails;
-create policy "authenticated users can add shared trails"
+drop policy if exists "group members can add shared trails" on shared_trails;
+create policy "group members can add shared trails"
   on shared_trails for insert
-  with check (auth.role() = 'authenticated' and auth.uid() = created_by);
+  with check (auth.role() = 'authenticated' and auth.uid() = created_by and (group_id is null or is_group_member(group_id)));
 
 drop policy if exists "creators can update their own shared trails" on shared_trails;
 create policy "creators can update their own shared trails"
@@ -197,20 +350,25 @@ create table if not exists shared_photos (
   lng double precision not null,
   note text default '',
   photo_path text not null,
+  group_id uuid references groups(id) on delete cascade,
   created_at timestamptz not null default now()
 );
+
+alter table shared_photos add column if not exists group_id uuid references groups(id) on delete cascade;
 
 alter table shared_photos enable row level security;
 
 drop policy if exists "authenticated users can read shared photos" on shared_photos;
-create policy "authenticated users can read shared photos"
+drop policy if exists "creator or group members can read shared photos" on shared_photos;
+create policy "creator or group members can read shared photos"
   on shared_photos for select
-  using (auth.role() = 'authenticated');
+  using (auth.uid() = created_by or (group_id is not null and is_group_member(group_id)));
 
 drop policy if exists "authenticated users can add shared photos" on shared_photos;
-create policy "authenticated users can add shared photos"
+drop policy if exists "group members can add shared photos" on shared_photos;
+create policy "group members can add shared photos"
   on shared_photos for insert
-  with check (auth.role() = 'authenticated' and auth.uid() = created_by);
+  with check (auth.role() = 'authenticated' and auth.uid() = created_by and (group_id is null or is_group_member(group_id)));
 
 drop policy if exists "creators can delete their own shared photos" on shared_photos;
 create policy "creators can delete their own shared photos"
@@ -223,45 +381,55 @@ create table if not exists locations (
   user_id uuid primary key references profiles(id) on delete cascade, -- see the profiles(id) note on shared_waypoints above
   lat double precision not null,
   lng double precision not null,
+  group_id uuid references groups(id) on delete cascade,
   updated_at timestamptz not null default now()
 );
+
+alter table locations add column if not exists group_id uuid references groups(id) on delete cascade;
 
 alter table locations enable row level security;
 
 drop policy if exists "authenticated users can read locations" on locations;
-create policy "authenticated users can read locations"
+drop policy if exists "self or group members can read locations" on locations;
+create policy "self or group members can read locations"
   on locations for select
-  using (auth.role() = 'authenticated');
+  using (auth.uid() = user_id or (group_id is not null and is_group_member(group_id)));
 
 drop policy if exists "users can upsert their own location" on locations;
 create policy "users can upsert their own location"
   on locations for insert
-  with check (auth.role() = 'authenticated' and auth.uid() = user_id);
+  with check (auth.role() = 'authenticated' and auth.uid() = user_id and (group_id is null or is_group_member(group_id)));
 
 drop policy if exists "users can update their own location" on locations;
 create policy "users can update their own location"
   on locations for update
-  using (auth.uid() = user_id);
+  using (auth.uid() = user_id)
+  with check (group_id is null or is_group_member(group_id));
 
 -- ---------- Chat ----------
 create table if not exists messages (
   id uuid primary key default uuid_generate_v4(),
   user_id uuid not null references profiles(id), -- see the profiles(id) note on shared_waypoints above
   body text not null,
+  group_id uuid references groups(id) on delete cascade,
   created_at timestamptz not null default now()
 );
+
+alter table messages add column if not exists group_id uuid references groups(id) on delete cascade;
 
 alter table messages enable row level security;
 
 drop policy if exists "authenticated users can read messages" on messages;
-create policy "authenticated users can read messages"
+drop policy if exists "self or group members can read messages" on messages;
+create policy "self or group members can read messages"
   on messages for select
-  using (auth.role() = 'authenticated');
+  using (auth.uid() = user_id or (group_id is not null and is_group_member(group_id)));
 
 drop policy if exists "authenticated users can send messages" on messages;
-create policy "authenticated users can send messages"
+drop policy if exists "group members can send messages" on messages;
+create policy "group members can send messages"
   on messages for insert
-  with check (auth.role() = 'authenticated' and auth.uid() = user_id);
+  with check (auth.role() = 'authenticated' and auth.uid() = user_id and (group_id is null or is_group_member(group_id)));
 
 -- ---------- Personal trails & waypoints (private per-user backup) ----------
 -- Unlike shared_trails/shared_waypoints above (visible to every signed-in
@@ -453,6 +621,42 @@ create policy "anyone can report an error"
   on error_reports for insert
   with check (true);
 
+-- ---------- Global community trails (anonymous, app-wide) ----------
+-- Every trail you actually record (GPS "Go & Track", not a tapped-out
+-- planned route — see js/app.js's stop-recording handler) is contributed
+-- here automatically, building out real trail coverage across the whole
+-- app over time as more people drive. Unlike shared_trails (crew-only,
+-- attributed to whoever created it), this has NO user/creator column at
+-- all — not hidden, not nullable, just never collected — so there's
+-- nothing to deanonymize even by an admin query. Readable by everyone,
+-- signed in or not, since the point is for this to actually build out
+-- coverage app-wide rather than stay locked behind an account.
+-- Writes still require being signed in (not a specific crew group, any
+-- account) — a mild deterrent against drive-by spam given the anon key
+-- is public, since the data itself carries no identity to punish.
+-- No delete policy for anyone, including the row's own contributor —
+-- there's no owner to check. Remove a bad entry directly from the
+-- Supabase Table Editor (bypasses RLS as the project owner), same as
+-- error_reports above.
+create table if not exists global_trails (
+  id uuid primary key default uuid_generate_v4(),
+  points jsonb not null, -- [{lat, lng, ele, t}, ...] — same shape as shared_trails.points
+  distance_meters double precision,
+  created_at timestamptz not null default now()
+);
+
+alter table global_trails enable row level security;
+
+drop policy if exists "anyone can read global trails" on global_trails;
+create policy "anyone can read global trails"
+  on global_trails for select
+  using (true);
+
+drop policy if exists "authenticated users can contribute global trails" on global_trails;
+create policy "authenticated users can contribute global trails"
+  on global_trails for insert
+  with check (auth.role() = 'authenticated');
+
 -- ---------- Migrate existing FKs to reference profiles(id) ----------
 -- If these tables already existed (created before the `references
 -- profiles(id)` change above), their user/creator column still points at
@@ -512,7 +716,13 @@ end $$;
 
 -- ---------- Storage ----------
 -- Trail/waypoint/standalone photos — one shared bucket, any authenticated
--- user can read or upload (no group-folder scoping needed anymore).
+-- user can read or upload. NOT group-scoped: unlike the tables above, a
+-- photo's storage path (`${uid}/${timestamp}.ext`) carries no group_id,
+-- so this relies on that path being unguessable rather than on RLS to
+-- keep it out of other groups' hands. Tightening this to match the
+-- tables' group scoping would need the object's group recorded
+-- somewhere queryable (there's no join target on storage.objects today)
+-- — left as a known gap for now.
 insert into storage.buckets (id, name, public)
 values ('trail-photos', 'trail-photos', false)
 on conflict (id) do nothing;

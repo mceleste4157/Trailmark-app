@@ -1,6 +1,30 @@
 {
-  "current": "1.49",
+  "current": "1.53",
   "history": [
+    {
+      "version": "1.53",
+      "date": "2026-09-23",
+      "summary": "Add anonymous, app-wide community trails layer",
+      "commit": "5eab856"
+    },
+    {
+      "version": "1.52",
+      "date": "2026-09-23",
+      "summary": "Fix \"function gen_salt(unknown) does not exist\" in create_group/join_group",
+      "commit": "f6311e2"
+    },
+    {
+      "version": "1.51",
+      "date": "2026-09-23",
+      "summary": "Add a visible Sign In button and crew groups (name + password)",
+      "commit": "0556f71"
+    },
+    {
+      "version": "1.50",
+      "date": "2026-09-23",
+      "summary": "Move app title/version out of the topbar into Settings",
+      "commit": "ee55d03"
+    },
     {
       "version": "1.49",
       "date": "2026-09-22",
