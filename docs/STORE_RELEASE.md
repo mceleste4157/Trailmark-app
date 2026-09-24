@@ -20,6 +20,8 @@ must stay outside this repository.
    privacy policy, and short feature-demonstration video.
    The public privacy policy is published at
    `https://mceleste4157.github.io/Trailmark-app/privacy.html`.
+   Account-deletion instructions are published at
+   `https://mceleste4157.github.io/Trailmark-app/delete-account.html`.
 7. Publish to an internal or closed testing track before production. Personal
    developer accounts created after November 13, 2023 currently require 12
    opted-in closed testers for 14 continuous days before production access.
