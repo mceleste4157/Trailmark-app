@@ -1,6 +1,12 @@
 {
-  "current": "1.56",
+  "current": "1.57",
   "history": [
+    {
+      "version": "1.57",
+      "date": "2026-09-24",
+      "summary": "Target Android 16 for Play release",
+      "commit": "e55a1cf"
+    },
     {
       "version": "1.56",
       "date": "2026-09-24",
