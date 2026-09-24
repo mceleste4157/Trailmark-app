@@ -14,18 +14,24 @@ must stay outside this repository.
 4. Upload the signed AAB and enroll the app in Play App Signing.
 5. Complete the store listing, Data safety, content rating, app access, ads,
    target-audience, and location/background-location declarations.
-6. Publish to an internal or closed testing track before production.
+6. Supply Google's background-location declaration, prominent disclosure,
+   privacy policy, and short feature-demonstration video.
+7. Publish to an internal or closed testing track before production. Personal
+   developer accounts created after November 13, 2023 currently require 12
+   opted-in closed testers for 14 continuous days before production access.
 
 ## Apple App Store
 
 1. Add the Apple Developer account to Xcode and select its team for Trailmark.
-2. Register the explicit App ID `com.mceleste.trailmark`. Enable only the
-   capabilities used by the checked-in entitlements.
-3. Create the Trailmark record in App Store Connect.
-4. Use Xcode automatic signing to archive and upload build 1 of version 1.0.0.
-5. Complete App Privacy, age rating, export-compliance, support URL, privacy
+2. Request Apple's CarPlay Navigation entitlement, accept the CarPlay
+   Entitlement Addendum, and wait for Apple to assign the managed capability.
+3. Register the explicit App ID `com.mceleste.trailmark` and enable the approved
+   CarPlay capability used by `Trailmark.entitlements`.
+4. Create the Trailmark record in App Store Connect.
+5. Use Xcode automatic signing to archive and upload build 1 of version 1.0.0.
+6. Complete App Privacy, age rating, export-compliance, support URL, privacy
    policy URL, description, keywords, and screenshots.
-6. Test the uploaded build with TestFlight before submitting it for review.
+7. Test the uploaded build with TestFlight before submitting it for review.
 
 ## Before every upload
 
