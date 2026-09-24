@@ -1,5 +1,5 @@
 // Caches the app shell so Trailmark loads with zero connectivity.
-const SHELL_CACHE = "trailmark-shell-v1.53";
+const SHELL_CACHE = "trailmark-shell-v1.54";
 // Live online-basemap tiles/style/sprite/glyphs, cached opportunistically
 // as "Download This Area" (js/app.js) walks a bounding box and fetches
 // each tile — see the fetch handler below for what qualifies.
