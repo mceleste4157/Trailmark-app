@@ -1,6 +1,12 @@
 {
-  "current": "1.54",
+  "current": "1.55",
   "history": [
+    {
+      "version": "1.55",
+      "date": "2026-09-24",
+      "summary": "Add account/data deletion — Play Store data-safety requirement",
+      "commit": "17a574f"
+    },
     {
       "version": "1.54",
       "date": "2026-09-24",
