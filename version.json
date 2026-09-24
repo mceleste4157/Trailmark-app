@@ -1,6 +1,12 @@
 {
-  "current": "1.55",
+  "current": "1.56",
   "history": [
+    {
+      "version": "1.56",
+      "date": "2026-09-24",
+      "summary": "Add account deletion instructions",
+      "commit": "92b1778"
+    },
     {
       "version": "1.55",
       "date": "2026-09-24",
