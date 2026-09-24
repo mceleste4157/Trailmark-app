@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Delete Your Trailmark Account</title>
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+<!-- Standalone on purpose — not part of the app shell/service worker,
+     so it works as a plain, always-reachable web page even if the PWA
+     itself is broken, uninstalled, or the visitor has never used it.
+     This is the account/data deletion URL Google Play's Data Safety
+     section requires for any app that supports account creation. -->
+<script src="vendor/supabase/supabase.js"></script>
+<script src="js/group/config.js"></script>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #111827;
+    --accent-bright: #22c55e;
+    --danger: #dc2626;
+    --text: #e5e7eb;
+    --text-dim: #9ca3af;
+    --border: #1f2937;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 32px 16px;
+  }
+  main { max-width: 480px; width: 100%; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  p { color: var(--text-dim); line-height: 1.5; font-size: 14px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 16px;
+  }
+  label { display: block; font-size: 13px; margin: 12px 0 4px; }
+  input {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 15px;
+  }
+  button {
+    width: 100%;
+    margin-top: 16px;
+    padding: 12px;
+    border-radius: 8px;
+    border: none;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .primary { background: var(--accent-bright); color: #05170a; }
+  .danger { background: var(--danger); color: #fff; }
+  .link-btn {
+    background: none;
+    color: var(--text-dim);
+    text-decoration: underline;
+    font-weight: 400;
+    width: auto;
+    padding: 0;
+    margin-top: 12px;
+  }
+  #status { font-size: 13px; margin-top: 12px; min-height: 18px; }
+  #status.error { color: #f87171; }
+  #status.ok { color: var(--accent-bright); }
+  ul { color: var(--text-dim); font-size: 14px; line-height: 1.6; padding-left: 20px; }
+  a { color: var(--accent-bright); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Delete Your Trailmark Account</h1>
+  <p>This permanently deletes your Trailmark account and the data tied to it. Specifically:</p>
+  <ul>
+    <li><strong>Deleted:</strong> your account/login, your private backup of My Content (trails, waypoints), your saved vehicles and maintenance records, and your uploaded photos.</li>
+    <li><strong>Anonymized, not deleted:</strong> anything you shared with a crew group — shared waypoints, trails, photos, and chat messages stay visible to that crew, just no longer attributed to you.</li>
+  </ul>
+  <p>This can't be undone.</p>
+
+  <div class="card" id="signin-card">
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username" placeholder="you@example.com" />
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="Your password" />
+    <button class="primary" id="signin-btn">Sign In</button>
+    <div id="signin-status"></div>
+  </div>
+
+  <div class="card hidden" id="delete-card">
+    <p id="signed-in-as" style="color: var(--text);"></p>
+    <button class="danger" id="delete-btn">Delete My Account and Data</button>
+    <button class="link-btn" id="cancel-btn">Cancel / sign out</button>
+    <div id="status"></div>
+  </div>
+
+  <p style="margin-top: 24px;">
+    Can't sign in, or would rather not? Email
+    <a href="mailto:REPLACE-WITH-YOUR-SUPPORT-EMAIL@example.com">REPLACE-WITH-YOUR-SUPPORT-EMAIL@example.com</a>
+    from the address on your account and it'll be deleted manually.
+  </p>
+  <p><a href="index.html">&larr; Back to Trailmark</a></p>
+</main>
+
+<script>
+  if (!GroupConfig.isConfigured) {
+    document.querySelector("main").innerHTML =
+      '<h1>Delete Your Trailmark Account</h1><p>Account deletion isn\'t available right now — the app\'s backend isn\'t configured. Contact support instead.</p>';
+  } else {
+    const client = supabase.createClient(GroupConfig.url, GroupConfig.anonKey);
+    const signinCard = document.getElementById("signin-card");
+    const deleteCard = document.getElementById("delete-card");
+    const signinStatus = document.getElementById("signin-status");
+    const status = document.getElementById("status");
+
+    async function showStateForSession() {
+      const { data } = await client.auth.getSession();
+      if (data.session) {
+        signinCard.classList.add("hidden");
+        deleteCard.classList.remove("hidden");
+        document.getElementById("signed-in-as").textContent = "Signed in as " + data.session.user.email;
+      } else {
+        signinCard.classList.remove("hidden");
+        deleteCard.classList.add("hidden");
+      }
+    }
+
+    document.getElementById("signin-btn").addEventListener("click", async () => {
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+      signinStatus.textContent = "";
+      signinStatus.className = "";
+      try {
+        const { error } = await client.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        await showStateForSession();
+      } catch (err) {
+        signinStatus.textContent = err.message;
+        signinStatus.className = "error";
+      }
+    });
+
+    document.getElementById("cancel-btn").addEventListener("click", async () => {
+      await client.auth.signOut();
+      await showStateForSession();
+    });
+
+    document.getElementById("delete-btn").addEventListener("click", async () => {
+      if (
+        !confirm(
+          "Permanently delete your Trailmark account and data? This can't be undone."
+        )
+      ) {
+        return;
+      }
+      status.textContent = "Deleting…";
+      status.className = "";
+      try {
+        const { error } = await client.rpc("delete_my_account");
+        if (error) throw error;
+        await client.auth.signOut();
+        deleteCard.innerHTML = "";
+        status.textContent = "";
+        document.querySelector("main").innerHTML =
+          '<h1>Account Deleted</h1><p>Your Trailmark account and data have been permanently deleted.</p><p><a href="index.html">&larr; Back to Trailmark</a></p>';
+      } catch (err) {
+        status.textContent = "Could not delete your account: " + err.message;
+        status.className = "error";
+      }
+    });
+
+    showStateForSession();
+  }
+</script>
+</body>
+</html>

@@ -19,6 +19,7 @@ const GroupBackend = (() => {
       signUp: disabled,
       signIn: disabled,
       signOut: disabled,
+      deleteMyAccount: disabled,
       getMyGroup: disabled,
       createGroup: disabled,
       joinGroup: disabled,
@@ -90,6 +91,17 @@ const GroupBackend = (() => {
     const { data, error } = await client.auth.signInWithPassword({ email, password });
     if (error) throw error;
     return data;
+  }
+
+  // Permanently deletes the signed-in user's account and personal data —
+  // see delete_my_account() in sql/schema.sql for exactly what this does
+  // and doesn't remove (shared content is anonymized, not deleted).
+  // Doesn't sign out itself — the account is gone either way once this
+  // resolves, but the caller still holds a (now invalid) session object
+  // it should clear.
+  async function deleteMyAccount() {
+    const { error } = await client.rpc("delete_my_account");
+    if (error) throw error;
   }
 
   async function signOut() {
@@ -594,6 +606,7 @@ const GroupBackend = (() => {
     signUp,
     signIn,
     signOut,
+    deleteMyAccount,
     getMyGroup,
     createGroup,
     joinGroup,

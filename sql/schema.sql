@@ -90,9 +90,16 @@ create table if not exists groups (
   id uuid primary key default uuid_generate_v4(),
   name text not null unique,
   password_hash text not null,
-  created_by uuid not null references profiles(id),
+  -- Nullable + set null on delete (not "not null" like when this table
+  -- was first written): deleting the creator's account must not destroy
+  -- the group out from under its other members — see delete_my_account()
+  -- near the end of this file.
+  created_by uuid references profiles(id) on delete set null,
   created_at timestamptz not null default now()
 );
+alter table groups alter column created_by drop not null;
+alter table groups drop constraint if exists groups_created_by_fkey;
+alter table groups add constraint groups_created_by_fkey foreign key (created_by) references profiles(id) on delete set null;
 
 create table if not exists group_members (
   user_id uuid primary key references profiles(id) on delete cascade,
@@ -211,12 +218,18 @@ $$;
 -- run"). Shared with your crew group, same as everything else here.
 create table if not exists folders (
   id uuid primary key default uuid_generate_v4(),
-  created_by uuid not null references auth.users(id),
+  -- Nullable + set null on delete, same reasoning as groups.created_by
+  -- above: deleting the creator's account shouldn't take the folder (and
+  -- everything filed in it) down with them.
+  created_by uuid references auth.users(id) on delete set null,
   name text not null,
   description text default '',
   group_id uuid references groups(id) on delete cascade,
   created_at timestamptz not null default now()
 );
+alter table folders alter column created_by drop not null;
+alter table folders drop constraint if exists folders_created_by_fkey;
+alter table folders add constraint folders_created_by_fkey foreign key (created_by) references profiles(id) on delete set null;
 
 alter table folders add column if not exists group_id uuid references groups(id) on delete cascade;
 
@@ -252,7 +265,10 @@ create table if not exists shared_waypoints (
   -- show who dropped something) across an actual foreign key, and it
   -- won't infer one transitively through a third table both merely
   -- reference. See the migration block below for existing databases.
-  created_by uuid not null references profiles(id),
+  -- Nullable + set null on delete: deleting the creator's account
+  -- anonymizes their shared waypoints rather than deleting the crew's
+  -- shared history out from under everyone else — see delete_my_account().
+  created_by uuid references profiles(id) on delete set null,
   name text not null,
   note text default '',
   lat double precision not null,
@@ -270,6 +286,9 @@ create table if not exists shared_waypoints (
 -- them explicitly too — idempotent, safe to re-run.
 alter table shared_waypoints add column if not exists severity smallint check (severity is null or severity between 1 and 3);
 alter table shared_waypoints add column if not exists group_id uuid references groups(id) on delete cascade;
+alter table shared_waypoints alter column created_by drop not null;
+alter table shared_waypoints drop constraint if exists shared_waypoints_created_by_fkey;
+alter table shared_waypoints add constraint shared_waypoints_created_by_fkey foreign key (created_by) references profiles(id) on delete set null;
 
 alter table shared_waypoints enable row level security;
 
@@ -303,7 +322,8 @@ create table if not exists shared_trails (
   -- were migrated; fixed here so a future "by <rider>" on shared trails,
   -- same as waypoints/photos already have, doesn't quietly fail RLS/
   -- PostgREST embedding the way theirs did.)
-  created_by uuid not null references profiles(id),
+  -- Nullable + set null on delete, same reasoning as shared_waypoints above.
+  created_by uuid references profiles(id) on delete set null,
   name text not null,
   kind text not null default 'recorded', -- 'recorded' | 'planned'
   rating text, -- 'favorite' | 'bad' | null
@@ -317,6 +337,9 @@ create table if not exists shared_trails (
 );
 
 alter table shared_trails add column if not exists group_id uuid references groups(id) on delete cascade;
+alter table shared_trails alter column created_by drop not null;
+alter table shared_trails drop constraint if exists shared_trails_created_by_fkey;
+alter table shared_trails add constraint shared_trails_created_by_fkey foreign key (created_by) references profiles(id) on delete set null;
 
 alter table shared_trails enable row level security;
 
@@ -345,7 +368,8 @@ create policy "creators can delete their own shared trails"
 -- ---------- Shared photos (snap-and-tag, standalone) ----------
 create table if not exists shared_photos (
   id uuid primary key default uuid_generate_v4(),
-  created_by uuid not null references profiles(id), -- see the profiles(id) note on shared_waypoints above
+  -- Nullable + set null on delete, same reasoning as shared_waypoints above.
+  created_by uuid references profiles(id) on delete set null, -- see the profiles(id) note on shared_waypoints above
   lat double precision not null,
   lng double precision not null,
   note text default '',
@@ -355,6 +379,9 @@ create table if not exists shared_photos (
 );
 
 alter table shared_photos add column if not exists group_id uuid references groups(id) on delete cascade;
+alter table shared_photos alter column created_by drop not null;
+alter table shared_photos drop constraint if exists shared_photos_created_by_fkey;
+alter table shared_photos add constraint shared_photos_created_by_fkey foreign key (created_by) references profiles(id) on delete set null;
 
 alter table shared_photos enable row level security;
 
@@ -409,13 +436,19 @@ create policy "users can update their own location"
 -- ---------- Chat ----------
 create table if not exists messages (
   id uuid primary key default uuid_generate_v4(),
-  user_id uuid not null references profiles(id), -- see the profiles(id) note on shared_waypoints above
+  -- Nullable + set null on delete: deleting the sender's account
+  -- anonymizes their chat history rather than deleting other members'
+  -- conversation out from under them.
+  user_id uuid references profiles(id) on delete set null, -- see the profiles(id) note on shared_waypoints above
   body text not null,
   group_id uuid references groups(id) on delete cascade,
   created_at timestamptz not null default now()
 );
 
 alter table messages add column if not exists group_id uuid references groups(id) on delete cascade;
+alter table messages alter column user_id drop not null;
+alter table messages drop constraint if exists messages_user_id_fkey;
+alter table messages add constraint messages_user_id_fkey foreign key (user_id) references profiles(id) on delete set null;
 
 alter table messages enable row level security;
 
@@ -610,9 +643,11 @@ create table if not exists error_reports (
   url text,
   user_agent text,
   app_version text,
-  reported_by uuid references profiles(id), -- null if not signed in
+  reported_by uuid references profiles(id) on delete set null, -- null if not signed in, or if that account was since deleted
   created_at timestamptz not null default now()
 );
+alter table error_reports drop constraint if exists error_reports_reported_by_fkey;
+alter table error_reports add constraint error_reports_reported_by_fkey foreign key (reported_by) references profiles(id) on delete set null;
 
 alter table error_reports enable row level security;
 
@@ -764,3 +799,53 @@ drop policy if exists "users can delete their own maintenance receipts" on stora
 create policy "users can delete their own maintenance receipts"
   on storage.objects for delete
   using (bucket_id = 'maintenance-receipts' and auth.uid()::text = (storage.foldername(name))[1]);
+
+-- ---------- Account deletion ----------
+-- Lets a signed-in user permanently delete their own account and
+-- personal data in one call — see delete-account.html (published
+-- alongside the app) for the user-facing page, and js/app.js's Settings
+-- panel for the in-app "Delete Account" button. Both just call this RPC.
+--
+-- What this actually does, in order:
+-- 1. Deletes this user's own photo/receipt uploads from Storage (paths
+--    are `${uid}/...`, so this only ever touches their own files).
+-- 2. Deletes `auth.users` for this uid. Every table below that stores
+--    genuinely private, personal data (personal_trails,
+--    personal_waypoints, personal_vehicles,
+--    personal_maintenance_records, locations, group_members) cascades
+--    automatically via its own `on delete cascade` foreign key, so
+--    there's nothing else to do for those. Tables holding data this
+--    user chose to SHARE with their crew (shared_waypoints,
+--    shared_trails, shared_photos, messages, folders, groups) do NOT
+--    cascade — see the `on delete set null` foreign keys added earlier
+--    in this file — so that content anonymizes (creator/sender becomes
+--    null) instead of vanishing out from under everyone else who could
+--    already see it.
+--
+-- A SECURITY DEFINER function can DELETE from auth.users directly
+-- (it's an ordinary table the function owner — the project's postgres
+-- role, since this runs via the SQL Editor — has full rights to); this
+-- is the standard self-service account-deletion pattern on Supabase.
+-- No confirmation step here — the caller (the web page / in-app button)
+-- is responsible for confirming with the user before calling this, since
+-- once it runs there's no undo.
+create or replace function delete_my_account()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  uid uuid := auth.uid();
+begin
+  if uid is null then
+    raise exception 'Not signed in';
+  end if;
+
+  delete from storage.objects
+  where bucket_id in ('trail-photos', 'maintenance-receipts')
+    and (storage.foldername(name))[1] = uid::text;
+
+  delete from auth.users where id = uid;
+end;
+$$;

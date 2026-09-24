@@ -4035,6 +4035,7 @@ async function openSettingsPanel() {
     </div>
     <button class="primary" id="open-folders-btn" style="background:var(--panel);border:1px solid var(--accent-bright);margin-top:12px;">Trip Folders</button>
     <button class="primary" id="sign-out-btn" style="background:var(--panel);border:1px solid var(--border);">Sign Out</button>
+    <button class="primary" id="delete-account-btn" style="background:var(--panel);border:1px solid var(--danger);color:var(--danger);margin-top:12px;">Delete Account</button>
     ${versionRowHtml()}
     `
   );
@@ -4057,6 +4058,25 @@ async function openSettingsPanel() {
     setSession(null);
     deactivateSocial();
     closePanel();
+  });
+  document.getElementById("delete-account-btn").addEventListener("click", async () => {
+    if (
+      !confirm(
+        "Permanently delete your account and data? This deletes your account, your private backup (My Content), and your saved vehicles/maintenance records. Anything you shared with your crew (waypoints, trails, photos, chat messages) stays visible to them, just no longer attributed to you. This can't be undone."
+      )
+    ) {
+      return;
+    }
+    try {
+      await GroupBackend.deleteMyAccount();
+    } catch (err) {
+      alert("Could not delete your account: " + err.message);
+      return;
+    }
+    setSession(null);
+    deactivateSocial();
+    closePanel();
+    alert("Your account and data have been deleted.");
   });
   wireVersionRow();
 }
