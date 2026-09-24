@@ -10,12 +10,16 @@ must stay outside this repository.
    `com.mceleste.trailmark`.
 2. Create a dedicated upload key and keep its keystore in a password manager or
    encrypted backup. Do not use Android's debug keystore.
-3. Configure local release signing and build with `./gradlew bundleRelease`.
+3. Configure local release signing and build with
+   `android/build-signed-bundle.sh`. The script reads the upload-key password
+   from macOS Keychain and keeps all signing secrets outside the repository.
 4. Upload the signed AAB and enroll the app in Play App Signing.
 5. Complete the store listing, Data safety, content rating, app access, ads,
    target-audience, and location/background-location declarations.
 6. Supply Google's background-location declaration, prominent disclosure,
    privacy policy, and short feature-demonstration video.
+   The public privacy policy is published at
+   `https://mceleste4157.github.io/Trailmark-app/privacy.html`.
 7. Publish to an internal or closed testing track before production. Personal
    developer accounts created after November 13, 2023 currently require 12
    opted-in closed testers for 14 continuous days before production access.

@@ -5,6 +5,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val uploadStoreFile = providers.environmentVariable("TRAILMARK_UPLOAD_STORE_FILE").orNull
+val uploadStorePassword = providers.environmentVariable("TRAILMARK_UPLOAD_STORE_PASSWORD").orNull
+val uploadKeyAlias = providers.environmentVariable("TRAILMARK_UPLOAD_KEY_ALIAS").orNull
+val uploadKeyPassword = providers.environmentVariable("TRAILMARK_UPLOAD_KEY_PASSWORD").orNull
+
 android {
     namespace = "com.mceleste.trailmark"
     compileSdk = 35
@@ -21,6 +26,27 @@ android {
         buildConfig = true
     }
 
+    if (
+        uploadStoreFile != null &&
+        uploadStorePassword != null &&
+        uploadKeyAlias != null &&
+        uploadKeyPassword != null
+    ) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(uploadStoreFile)
+                storePassword = uploadStorePassword
+                keyAlias = uploadKeyAlias
+                keyPassword = uploadKeyPassword
+            }
+        }
+
+        buildTypes {
+            getByName("release") {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
 }
 
 kotlin {
